@@ -1,8 +1,6 @@
 const rl = @import("raylib");
 const std = @import("std");
 
-const MAX_COLUMNS = 32;
-
 const Controler = struct {
     shoot: bool,
     direction: rl.Vector2,
@@ -70,7 +68,6 @@ const Player = struct {
 const Bullet = struct {
     pos: rl.Vector2,
     dir: rl.Vector2,
-    spawnTime: f64,
     deathTime: f64,
     fn isDead(self: *const Bullet) bool {
         return self.deathTime < rl.getTime();
@@ -79,54 +76,53 @@ const Bullet = struct {
         return std.math.order(a.deathTime, b.deathTime);
     }
 };
-const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .spawnTime = 0, .deathTime = 0 };
+const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .deathTime = 0 };
 
-const Bullets = struct {
-    bullets: std.PriorityDequeue(Bullet, void, Bullet.compare),
-    fn init(allocator: std.mem.Allocator) Bullets {
+const FireRate = 3.0; // in bullets per second
+const BulletSpeed = 0.1; // in units per frame
+const Gun = struct {
+    bullets: std.PriorityQueue(Bullet, void, Bullet.compare),
+    lastFired: f64,
+    fn isReadyToFire(self: Gun) bool {
+        return self.lastFired + 1.0 / FireRate < rl.getTime();
+    }
+    fn init(allocator: std.mem.Allocator) Gun {
         return .{
-            .bullets = std.PriorityDequeue(Bullet, void, Bullet.compare).init(allocator, {}),
+            .bullets = std.PriorityQueue(Bullet, void, Bullet.compare).init(allocator, {}),
+            .lastFired = rl.getTime(),
         };
     }
-    fn fire(self: *Bullets, bullet: Bullet) !void {
-        if (self.bullets.peekMax()) |x| {
-            if (x.spawnTime + 1 < rl.getTime()) {
-                try self.bullets.add(bullet);
-            }
-        } else if (self.bullets.count() == 0) {
+    fn fire(self: *Gun, bullet: Bullet) !void {
+        if (self.isReadyToFire()) {
             try self.bullets.add(bullet);
+            self.lastFired = rl.getTime();
         }
     }
-    fn draw(self: *const Bullets) void {
+    fn draw(self: *const Gun) void {
         for (self.bullets.items) |bullet| {
-            const pos = rl.Vector3.init(bullet.pos.x, 2, bullet.pos.y);
+            const pos = rl.Vector3.init(bullet.pos.x, 1.2, bullet.pos.y);
             rl.drawSphere(pos, 0.1, rl.Color.white);
         }
     }
-    fn update(self: *Bullets) void {
-        std.debug.print("All bullets cnt: {}\n", .{self.bullets.count()});
-        if (self.bullets.peekMin()) |x| {
+    fn update(self: *Gun) void {
+        if (self.bullets.peek()) |x| {
             if (x.isDead()) {
-                const min = self.bullets.removeMin();
-                std.debug.print("    minimumBullet = {}\n", .{min});
+                _ = self.bullets.remove();
             }
         }
         for (self.bullets.items) |*b| {
-            b.pos = b.pos.add(b.dir.normalize().scale(0.01));
+            b.pos = b.pos.add(b.dir.normalize().scale(BulletSpeed));
         }
     }
 };
 
-fn doShooting(controler: *const Controler, bullets: *Bullets, player: *const Player) !void {
+fn doShooting(controler: *const Controler, bullets: *Gun, player: *const Player) !void {
     if (controler.shoot) {
-        const bullet = Bullet{
+        try bullets.fire(Bullet{
             .pos = player.position,
             .dir = controler.direction,
-            .spawnTime = rl.getTime(),
             .deathTime = rl.getTime() + 2,
-        };
-        std.debug.print("Shooting: {}\n", .{bullet});
-        try bullets.fire(bullet);
+        });
     }
 }
 
@@ -135,7 +131,7 @@ pub fn main() anyerror!void {
     defer arena.deinit();
 
     var player = Player.init();
-    var bullets = Bullets.init(arena.allocator());
+    var bullets = Gun.init(arena.allocator());
 
     rl.initWindow(1600, 900, "Zorsh");
     defer rl.closeWindow();
