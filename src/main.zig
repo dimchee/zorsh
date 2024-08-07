@@ -79,6 +79,7 @@ const Bullet = struct {
         return std.math.order(a.deathTime, b.deathTime);
     }
 };
+const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .spawnTime = 0, .deathTime = 0 };
 
 const Bullets = struct {
     bullets: std.PriorityDequeue(Bullet, void, Bullet.compare),
@@ -92,8 +93,7 @@ const Bullets = struct {
             if (x.spawnTime + 1 < rl.getTime()) {
                 try self.bullets.add(bullet);
             }
-        }
-        if (self.bullets.count() == 0) {
+        } else if (self.bullets.count() == 0) {
             try self.bullets.add(bullet);
         }
     }
@@ -104,10 +104,12 @@ const Bullets = struct {
         }
     }
     fn update(self: *Bullets) void {
-        std.debug.print("All bullets: {any}\n\n", .{self.bullets.items});
-        while (self.bullets.count() > 0 and self.bullets.peekMin().?.isDead()) {
-            const min = self.bullets.removeMin();
-            std.debug.print("minimumBullet = {}", .{min});
+        std.debug.print("All bullets cnt: {}\n", .{self.bullets.count()});
+        if (self.bullets.peekMin()) |x| {
+            if (x.isDead()) {
+                const min = self.bullets.removeMin();
+                std.debug.print("    minimumBullet = {}\n", .{min});
+            }
         }
         for (self.bullets.items) |*b| {
             b.pos = b.pos.add(b.dir.normalize().scale(0.01));
@@ -116,14 +118,15 @@ const Bullets = struct {
 };
 
 fn doShooting(controler: *const Controler, bullets: *Bullets, player: *const Player) !void {
-    std.debug.print("{}", .{rl.getTime()});
     if (controler.shoot) {
-        try bullets.fire(Bullet{
+        const bullet = Bullet{
             .pos = player.position,
             .dir = controler.direction,
             .spawnTime = rl.getTime(),
             .deathTime = rl.getTime() + 2,
-        });
+        };
+        std.debug.print("Shooting: {}\n", .{bullet});
+        try bullets.fire(bullet);
     }
 }
 
