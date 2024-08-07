@@ -1,32 +1,86 @@
 const rl = @import("raylib");
+const std = @import("std");
+
+const MAX_COLUMNS = 32;
+
+const Player = struct {
+    position: rl.Vector2,
+    camera: rl.Camera3D,
+    fn init() Player {
+        return Player{
+            .position = rl.Vector2.init(0, 0),
+            .camera = rl.Camera3D{
+                .position = rl.Vector3.init(4, 10, 0),
+                .target = rl.Vector3.init(0, 0, 0),
+                .up = rl.Vector3.init(0, 1, 0),
+                .fovy = 60,
+                .projection = rl.CameraProjection.camera_perspective,
+            },
+        };
+    }
+    fn draw(self: *const Player) void {
+        const radius = 0.5;
+        const height = 2;
+        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
+        rl.drawCapsule(start, end, radius, 10, 1, rl.Color.light_gray);
+    }
+    fn update(self: *Player, movement: rl.Vector2) void {
+        self.position = rl.Vector2.add(self.position, movement);
+        self.camera.position.x += movement.x;
+        self.camera.position.z += movement.y;
+        self.camera.target = rl.Vector3.init(self.position.x, 0, self.position.y);
+    }
+};
 
 pub fn main() anyerror!void {
-    // Initialization
-    //--------------------------------------------------------------------------------------
-    const screenWidth = 800;
-    const screenHeight = 450;
+    var player = Player.init();
 
-    rl.initWindow(screenWidth, screenHeight, "raylib-zig [core] example - basic window");
-    defer rl.closeWindow(); // Close window and OpenGL context
+    rl.initWindow(800, 450, "Zorsh");
+    defer rl.closeWindow();
 
-    rl.setTargetFPS(60); // Set our game to run at 60 frames-per-second
-    //--------------------------------------------------------------------------------------
+    // rl.disableCursor();
+    rl.setTargetFPS(60);
+    while (!rl.windowShouldClose()) {
+        const movement = getControlerInput();
+        player.update(movement);
+        // camera.update(rl.CameraMode.camera_third_person);
 
-    // Main game loop
-    while (!rl.windowShouldClose()) { // Detect window close button or ESC key
-        // Update
-        //----------------------------------------------------------------------------------
-        // TODO: Update your variables here
-        //----------------------------------------------------------------------------------
-
-        // Draw
-        //----------------------------------------------------------------------------------
         rl.beginDrawing();
         defer rl.endDrawing();
+        rl.clearBackground(rl.Color.ray_white);
+        { // 3D drawing
+            player.camera.begin();
+            defer player.camera.end();
 
-        rl.clearBackground(rl.Color.white);
-
-        rl.drawText("Congrats! You created your first window!", 190, 200, 20, rl.Color.light_gray);
-        //----------------------------------------------------------------------------------
+            for (0..100) |i| {
+                for (0..100) |j| {
+                    const x: f32 = @floatFromInt(i);
+                    const z: f32 = @floatFromInt(j);
+                    rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.red else rl.Color.blue);
+                }
+            }
+            player.draw();
+        }
     }
+}
+
+pub fn getControlerInput() rl.Vector2 {
+    var vec = rl.Vector2.init(0, 0);
+    if (rl.isKeyDown(rl.KeyboardKey.key_w)) {
+        vec.x += 0.1;
+    }
+    if (rl.isKeyDown(rl.KeyboardKey.key_s)) {
+        vec.x -= 0.1;
+    }
+    if (rl.isKeyDown(rl.KeyboardKey.key_d)) {
+        vec.y += 0.1;
+    }
+    if (rl.isKeyDown(rl.KeyboardKey.key_a)) {
+        vec.y -= 0.1;
+    }
+    var dir = rl.getMousePosition();
+    dir.x -= @as(f32, @floatFromInt(rl.getScreenWidth())) / 2;
+    dir.y -= @as(f32, @floatFromInt(rl.getScreenHeight())) / 2;
+    return vec.rotate(-std.math.atan2(dir.x, dir.y));
 }
