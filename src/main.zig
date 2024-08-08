@@ -64,16 +64,6 @@ const Player = struct {
         self.camera.target = rl.Vector3.init(self.position.x, 0, self.position.y);
     }
 };
-const Enemy = struct {
-    position: rl.Vector2,
-    shot: bool,
-    fn draw(self: *const Enemy) void {
-        const height = 2;
-        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
-        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
-        rl.drawCapsule(start, end, radius, 10, 1, if (self.shot) rl.Color.red else rl.Color.light_gray);
-    }
-};
 
 const Bullet = struct {
     pos: rl.Vector2,
@@ -126,10 +116,12 @@ const Gun = struct {
     }
 };
 
-fn checkCollisions(gun: *const Gun, enemy: *Enemy) void {
-    for (gun.bullets.items) |b| {
+fn checkCollisions(gun: *Gun, enemy: *Enemy) void {
+    for (gun.bullets.items, 0..) |b, i| {
         if (rl.checkCollisionCircles(b.pos, 0.1, enemy.position, radius)) {
-            enemy.shot = true;
+            enemy.health = @max(0, enemy.health - 5);
+            _ = gun.bullets.removeIndex(i);
+            return;
         }
     }
 }
@@ -144,15 +136,47 @@ fn doShooting(controler: *const Controler, bullets: *Gun, player: *const Player)
     }
 }
 
+const Enemy = struct {
+    position: rl.Vector2,
+    health: i32,
+    target: *const Player,
+    fn init(target: *const Player) Enemy {
+        var rng = std.rand.DefaultPrng.init(0);
+        return Enemy{
+            .target = target,
+            .health = 100,
+            .position = rl.Vector2.init(
+                @floatFromInt(rng.random().intRangeAtMost(i32, 2, 5)),
+                @floatFromInt(rng.random().intRangeAtMost(i32, 2, 5)),
+            ),
+        };
+    }
+    fn draw(self: *const Enemy) void {
+        const height = 2;
+        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
+        rl.drawCapsule(start, end, radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
+            @as(f32, @floatFromInt(self.health)) / 100.0,
+            0,
+            0,
+            1,
+        )));
+    }
+    fn update(self: *Enemy) void {
+        const displacement = rl.Vector2.scale(rl.Vector2.subtract(self.target.*.position, self.position).normalize(), 0.05);
+        self.position = rl.Vector2.add(self.position, displacement);
+    }
+};
+
 pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     var player = Player.init();
     var gun = Gun.init(arena.allocator());
-    var enemy = Enemy{ .position = rl.Vector2.init(3, 3), .shot = false };
 
     rl.initWindow(1600, 900, "Zorsh");
+    var enemy = Enemy.init(&player);
     defer rl.closeWindow();
 
     // rl.disableCursor();
@@ -162,6 +186,7 @@ pub fn main() anyerror!void {
         player.update(movement);
         try doShooting(&movement, &gun, &player);
         gun.update();
+        enemy.update();
         checkCollisions(&gun, &enemy);
         // camera.update(rl.CameraMode.camera_third_person);
 
