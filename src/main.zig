@@ -33,8 +33,35 @@ const Player = struct {
     }
 };
 
+const Enemy = struct {
+    position: rl.Vector2,
+    health: i32,
+    target: *const Player,
+    fn init(target: *const Player) Enemy {
+        var rng = std.rand.DefaultPrng.init(0);
+        return Enemy{
+            .target = target,
+            .health = 100,
+            .position = rl.Vector2.init(@floatFromInt(rng.random().intRangeAtMost(i32, -100, 101)), @floatFromInt(rng.random().intRangeAtMost(i32, -100, 101))),
+        };
+    }
+    fn draw(self: *const Enemy) void {
+        const radius = 0.5;
+        const height = 2;
+        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
+        rl.drawCapsule(start, end, radius, 10, 1, rl.Color.brown);
+    }
+    fn update(self: *Enemy) void {
+        const displacement = rl.Vector2.scale(rl.Vector2.subtract(self.target.*.position, self.position).normalize(), 0.05);
+        self.position = rl.Vector2.add(self.position, displacement);
+    }
+};
+
 pub fn main() anyerror!void {
     var player = Player.init();
+
+    var enemy1 = Enemy.init(&player);
 
     rl.initWindow(800, 450, "Zorsh");
     defer rl.closeWindow();
@@ -45,6 +72,8 @@ pub fn main() anyerror!void {
         const movement = getControlerInput();
         player.update(movement);
         // camera.update(rl.CameraMode.camera_third_person);
+
+        enemy1.update();
 
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -61,6 +90,7 @@ pub fn main() anyerror!void {
                 }
             }
             player.draw();
+            enemy1.draw();
         }
     }
 }
