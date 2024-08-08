@@ -35,6 +35,7 @@ const Controler = struct {
     }
 };
 
+const radius = 0.5;
 const Player = struct {
     position: rl.Vector2,
     camera: rl.Camera3D,
@@ -51,7 +52,6 @@ const Player = struct {
         };
     }
     fn draw(self: *const Player) void {
-        const radius = 0.5;
         const height = 2;
         const start = rl.Vector3.init(self.position.x, radius, self.position.y);
         const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
@@ -62,6 +62,16 @@ const Player = struct {
         self.camera.position.x += controler.delta.x;
         self.camera.position.z += controler.delta.y;
         self.camera.target = rl.Vector3.init(self.position.x, 0, self.position.y);
+    }
+};
+const Enemy = struct {
+    position: rl.Vector2,
+    shot: bool,
+    fn draw(self: *const Enemy) void {
+        const height = 2;
+        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
+        rl.drawCapsule(start, end, radius, 10, 1, if (self.shot) rl.Color.red else rl.Color.light_gray);
     }
 };
 
@@ -79,7 +89,7 @@ const Bullet = struct {
 const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .deathTime = 0 };
 
 const FireRate = 3.0; // in bullets per second
-const BulletSpeed = 0.1; // in units per frame
+const BulletSpeed = 0.2; // in units per frame
 const Gun = struct {
     bullets: std.PriorityQueue(Bullet, void, Bullet.compare),
     lastFired: f64,
@@ -116,6 +126,14 @@ const Gun = struct {
     }
 };
 
+fn checkCollisions(gun: *const Gun, enemy: *Enemy) void {
+    for (gun.bullets.items) |b| {
+        if (rl.checkCollisionCircles(b.pos, 0.1, enemy.position, radius)) {
+            enemy.shot = true;
+        }
+    }
+}
+
 fn doShooting(controler: *const Controler, bullets: *Gun, player: *const Player) !void {
     if (controler.shoot) {
         try bullets.fire(Bullet{
@@ -131,7 +149,8 @@ pub fn main() anyerror!void {
     defer arena.deinit();
 
     var player = Player.init();
-    var bullets = Gun.init(arena.allocator());
+    var gun = Gun.init(arena.allocator());
+    var enemy = Enemy{ .position = rl.Vector2.init(3, 3), .shot = false };
 
     rl.initWindow(1600, 900, "Zorsh");
     defer rl.closeWindow();
@@ -141,8 +160,9 @@ pub fn main() anyerror!void {
     while (!rl.windowShouldClose()) {
         const movement = Controler.getInput();
         player.update(movement);
-        try doShooting(&movement, &bullets, &player);
-        bullets.update();
+        try doShooting(&movement, &gun, &player);
+        gun.update();
+        checkCollisions(&gun, &enemy);
         // camera.update(rl.CameraMode.camera_third_person);
 
         rl.beginDrawing();
@@ -156,11 +176,12 @@ pub fn main() anyerror!void {
                 for (0..100) |j| {
                     const x: f32 = @floatFromInt(i);
                     const z: f32 = @floatFromInt(j);
-                    rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.red else rl.Color.blue);
+                    rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
                 }
             }
             player.draw();
-            bullets.draw();
+            gun.draw();
+            enemy.draw();
         }
     }
 }
