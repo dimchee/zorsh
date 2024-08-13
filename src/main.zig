@@ -98,6 +98,18 @@ const Gun = struct {
             self.lastFired = rl.getTime();
         }
     }
+    fn closestBullet(self: *const Gun, point: rl.Vec2) usize {
+        var minSqrDist = std.math.floatMax(f32);
+        var minInd = 0;
+        for (self.bullets.items, 0..) |bullet, i| {
+            const dSqr = bullet.pos.subtract(point).lengthSqr();
+            if (dSqr < minSqrDist) {
+                minSqrDist = dSqr;
+                minInd = i;
+            }
+        }
+        return minInd;
+    }
     fn draw(self: *const Gun) void {
         for (self.bullets.items) |bullet| {
             const pos = rl.Vector3.init(bullet.pos.x, 1.2, bullet.pos.y);
@@ -160,6 +172,16 @@ const Evil = struct {
     fn update(self: *Evil) void {
         for (self.enemies.items) |*e| {
             e.update();
+        }
+        for (self.enemies.items) |*x| {
+            for (self.enemies.items) |*y| {
+                if (rl.checkCollisionCircles(x.position, radius, y.position, radius)) {
+                    const collisionRad = y.position.distance(x.position) - 2 * radius;
+                    const dir = y.position.subtract(x.position).scale(collisionRad / 2);
+                    x.position = x.position.add(dir);
+                    y.position = y.position.subtract(dir);
+                }
+            }
         }
     }
     fn addRandomEnemy(self: *Evil) !void {
