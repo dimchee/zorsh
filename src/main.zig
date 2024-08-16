@@ -14,7 +14,6 @@ const config = .{
     \\|_______|
     ,
 };
-// const Circle = struct { center: rl.Vector2, radius: f32 };
 // const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
 
 const Controler = struct {
@@ -83,7 +82,7 @@ const Player = struct {
 };
 
 const Bullet = struct {
-    pos: rl.Vector2,
+    position: rl.Vector2,
     dir: rl.Vector2,
     deathTime: f64,
     fn isDead(self: *const Bullet) bool {
@@ -116,7 +115,7 @@ const Gun = struct {
         var minSqrDist = std.math.floatMax(f32);
         var minInd = 0;
         for (self.bullets.items, 0..) |bullet, i| {
-            const dSqr = bullet.pos.subtract(point).lengthSqr();
+            const dSqr = bullet.position.subtract(point).lengthSqr();
             if (dSqr < minSqrDist) {
                 minSqrDist = dSqr;
                 minInd = i;
@@ -126,7 +125,7 @@ const Gun = struct {
     }
     fn draw(self: *const Gun) void {
         for (self.bullets.items) |bullet| {
-            const pos = rl.Vector3.init(bullet.pos.x, 1.2, bullet.pos.y);
+            const pos = rl.Vector3.init(bullet.position.x, 1.2, bullet.position.y);
             rl.drawSphere(pos, 0.1, rl.Color.white);
         }
     }
@@ -137,7 +136,7 @@ const Gun = struct {
             }
         }
         for (self.bullets.items) |*b| {
-            b.pos = b.pos.add(b.dir.normalize().scale(config.bullet.speed));
+            b.position = b.position.add(b.dir.normalize().scale(config.bullet.speed));
         }
     }
 };
@@ -145,7 +144,12 @@ const Gun = struct {
 fn checkBulletCollision(gun: *Gun, evil: *Evil) void {
     for (gun.bullets.items, 0..) |bullet, bulletI| {
         for (evil.enemies.items, 0..) |*enemy, enemyI| {
-            if (rl.checkCollisionCircles(bullet.pos, 0.1, enemy.position, config.character.radius)) {
+            const dir = circlesCollisionDirection(
+                .{ .center = bullet.position, .radius = 0.1 },
+                .{ .center = enemy.position, .radius = config.character.radius },
+            );
+
+            if (dir.lengthSqr() > 0) {
                 if (enemy.health < config.bullet.damage) {
                     _ = evil.enemies.swapRemove(enemyI);
                 } else enemy.health -= config.bullet.damage;
@@ -157,38 +161,29 @@ fn checkBulletCollision(gun: *Gun, evil: *Evil) void {
 }
 
 fn dynamicCollide(x: anytype, y: anytype) void {
-    if (rl.checkCollisionCircles(x.position, config.character.radius, y.position, config.character.radius)) {
-        const collisionRad = y.position.distance(x.position) - 2 * config.character.radius;
-        const dir = y.position.subtract(x.position).scale(collisionRad / 2);
-        x.position = x.position.add(dir);
-        y.position = y.position.subtract(dir);
+    const dir = circlesCollisionDirection(
+        .{ .center = x.position, .radius = config.character.radius },
+        .{ .center = y.position, .radius = config.character.radius },
+    );
+    if (dir.lengthSqr() > 0) {
+        x.position = x.position.add(dir.scale(0.5));
+        y.position = y.position.subtract(dir.scale(0.5));
     }
 }
 
+const Circle = struct { center: rl.Vector2, radius: f32 };
+fn circlesCollisionDirection(a: Circle, b: Circle) rl.Vector2 {
+    const scale = @max(a.radius + b.radius - a.center.distance(b.center), 0);
+    return a.center.subtract(b.center).normalize().scale(scale);
+}
+
 fn directionToWall(wall: *const Wall, p: rl.Vector2) rl.Vector2 {
-    const rect = .{
-        .min = .{
-            .x = wall.position.x - wall.size.x / 2,
-            .y = wall.position.y - wall.size.z / 2,
-        },
-        .max = .{
-            .x = wall.position.x + wall.size.x / 2,
-            .y = wall.position.y + wall.size.z / 2,
-        },
-    };
-    const dx = if (p.x < rect.min.x)
-        p.x - rect.min.x
-    else if (rect.max.x < p.x)
-        p.x - rect.max.x
-    else
-        0;
-    const dy = if (p.y < rect.min.y)
-        p.y - rect.min.y
-    else if (rect.max.y < p.y)
-        p.y - rect.max.y
-    else
-        0;
-    return rl.Vector2.init(dx, dy);
+    const delta = rl.Vector2.init(wall.size.x / 2, wall.size.z / 2);
+    const rect = .{ .min = wall.position.subtract(delta), .max = wall.position.add(delta) };
+    return rl.Vector2.init(
+        @min(p.x - rect.min.x, 0) + @max(p.x - rect.max.x, 0),
+        @min(p.y - rect.min.y, 0) + @max(p.y - rect.max.y, 0),
+    );
 }
 
 fn staticCollide(wall: *const Wall, x: anytype) void {
@@ -216,7 +211,7 @@ fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *Dungeon) void
 fn doShooting(controler: *const Controler, bullets: *Gun, player: *const Player) !void {
     if (controler.shoot) {
         try bullets.fire(Bullet{
-            .pos = player.position,
+            .position = player.position,
             .dir = controler.direction,
             .deathTime = rl.getTime() + 2,
         });
