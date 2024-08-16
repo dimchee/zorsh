@@ -1,24 +1,21 @@
 const rl = @import("raylib");
 const std = @import("std");
 
-const radius = 0.5;
-const FireRate = 3.0; // in bullets per second
-const BulletSpeed = 0.2; // in units per frame
-const PlayerSpeed = 0.1; // in units per frame
-const height = 2; // player and enemy height
-const dmg = 5;
-const map =
+// all speeds are in units per frame
+const config = .{
+    .wall = .{ .length = 3, .height = 2, .thickness = 0.2 },
+    .character = .{ .radius = 0.5, .height = 2, .speed = 0.1 },
+    .bullet = .{ .speed = 0.2, .damage = 5, .rate = 3.0 },
+    .enemy = .{ .speedFactor = 0.6 },
+    .map =
     \\| |_| |_|
     \\| |  _  |
     \\| |_ _| |
     \\|_______|
-;
-// const map =
-//     \\ _ _ _
-//     \\|_|_|_|
-//     \\|_|_|_|
-//     \\|_|_|_|
-// ;
+    ,
+};
+// const Circle = struct { center: rl.Vector2, radius: f32 };
+// const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
 
 const Controler = struct {
     shoot: bool,
@@ -43,14 +40,13 @@ const Controler = struct {
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space)) {
             shoot = true;
         }
-        vec = vec.normalize().scale(PlayerSpeed);
         var dir = rl.getMousePosition();
         dir.x -= @as(f32, @floatFromInt(rl.getScreenWidth())) / 2;
         dir.y -= @as(f32, @floatFromInt(rl.getScreenHeight())) / 2;
         return Controler{
             .shoot = shoot,
             .direction = dir,
-            .delta = vec.rotate(-std.math.atan2(dir.x, dir.y)),
+            .delta = vec.normalize().scale(config.character.speed).rotate(-std.math.atan2(dir.x, dir.y)),
         };
     }
 };
@@ -58,11 +54,14 @@ const Controler = struct {
 const Player = struct {
     position: rl.Vector2,
     camera: rl.Camera3D,
+    cameraDelta: rl.Vector3,
     fn init() Player {
-        return Player{
+        const cameraDelta = rl.Vector3.init(0, 10, 4);
+        return .{
             .position = rl.Vector2.init(0, 0),
+            .cameraDelta = cameraDelta,
             .camera = rl.Camera3D{
-                .position = rl.Vector3.init(0, 10, 4),
+                .position = cameraDelta,
                 .target = rl.Vector3.init(0, 0, 0),
                 .up = rl.Vector3.init(0, 1, 0),
                 .fovy = 60,
@@ -71,15 +70,15 @@ const Player = struct {
         };
     }
     fn draw(self: *const Player) void {
-        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
-        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
-        rl.drawCapsule(start, end, radius, 10, 1, rl.Color.light_gray);
+        const start = rl.Vector3.init(self.position.x, config.character.radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, config.character.height - config.character.radius, self.position.y);
+        rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.light_gray);
     }
     fn update(self: *Player, controler: Controler) void {
         self.position = self.position.add(controler.delta);
-        self.camera.position.x += controler.delta.x;
-        self.camera.position.z += controler.delta.y;
-        self.camera.target = rl.Vector3.init(self.position.x, 0, self.position.y);
+        const pos3d = rl.Vector3.init(self.position.x, 0, self.position.y);
+        self.camera.position = pos3d.add(self.cameraDelta);
+        self.camera.target = pos3d;
     }
 };
 
@@ -94,13 +93,12 @@ const Bullet = struct {
         return std.math.order(a.deathTime, b.deathTime);
     }
 };
-const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .deathTime = 0 };
 
 const Gun = struct {
     bullets: std.PriorityQueue(Bullet, void, Bullet.compare),
     lastFired: f64,
     fn isReadyToFire(self: Gun) bool {
-        return self.lastFired + 1.0 / FireRate < rl.getTime();
+        return self.lastFired + 1.0 / config.bullet.rate < rl.getTime();
     }
     fn init(allocator: std.mem.Allocator) Gun {
         return .{
@@ -139,22 +137,79 @@ const Gun = struct {
             }
         }
         for (self.bullets.items) |*b| {
-            b.pos = b.pos.add(b.dir.normalize().scale(BulletSpeed));
+            b.pos = b.pos.add(b.dir.normalize().scale(config.bullet.speed));
         }
     }
 };
 
-fn checkCollisions(gun: *Gun, evil: *Evil) void {
+fn checkBulletCollision(gun: *Gun, evil: *Evil) void {
     for (gun.bullets.items, 0..) |bullet, bulletI| {
         for (evil.enemies.items, 0..) |*enemy, enemyI| {
-            if (rl.checkCollisionCircles(bullet.pos, 0.1, enemy.position, radius)) {
-                if (enemy.health < dmg) {
+            if (rl.checkCollisionCircles(bullet.pos, 0.1, enemy.position, config.character.radius)) {
+                if (enemy.health < config.bullet.damage) {
                     _ = evil.enemies.swapRemove(enemyI);
-                } else enemy.health -= dmg;
+                } else enemy.health -= config.bullet.damage;
                 _ = gun.bullets.removeIndex(bulletI);
                 return;
             }
         }
+    }
+}
+
+fn dynamicCollide(x: anytype, y: anytype) void {
+    if (rl.checkCollisionCircles(x.position, config.character.radius, y.position, config.character.radius)) {
+        const collisionRad = y.position.distance(x.position) - 2 * config.character.radius;
+        const dir = y.position.subtract(x.position).scale(collisionRad / 2);
+        x.position = x.position.add(dir);
+        y.position = y.position.subtract(dir);
+    }
+}
+
+fn directionToWall(wall: *const Wall, p: rl.Vector2) rl.Vector2 {
+    const rect = .{
+        .min = .{
+            .x = wall.position.x - wall.size.x / 2,
+            .y = wall.position.y - wall.size.z / 2,
+        },
+        .max = .{
+            .x = wall.position.x + wall.size.x / 2,
+            .y = wall.position.y + wall.size.z / 2,
+        },
+    };
+    const dx = if (p.x < rect.min.x)
+        p.x - rect.min.x
+    else if (rect.max.x < p.x)
+        p.x - rect.max.x
+    else
+        0;
+    const dy = if (p.y < rect.min.y)
+        p.y - rect.min.y
+    else if (rect.max.y < p.y)
+        p.y - rect.max.y
+    else
+        0;
+    return rl.Vector2.init(dx, dy);
+}
+
+fn staticCollide(wall: *const Wall, x: anytype) void {
+    const dir = directionToWall(wall, x.position);
+    if (dir.lengthSqr() < config.character.radius * config.character.radius) {
+        x.position = dir.normalize().scale(config.character.radius - dir.length()).add(x.position);
+    }
+}
+
+fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *Dungeon) void {
+    for (evil.enemies.items) |*x| {
+        for (evil.enemies.items) |*y| {
+            dynamicCollide(x, y);
+        }
+        dynamicCollide(x, player);
+    }
+    for (dungeon.walls.items) |*static| {
+        for (evil.enemies.items) |*x| {
+            staticCollide(static, x);
+        }
+        staticCollide(static, player);
     }
 }
 
@@ -186,16 +241,6 @@ const Evil = struct {
         for (self.enemies.items) |*e| {
             e.update(target);
         }
-        for (self.enemies.items) |*x| {
-            for (self.enemies.items) |*y| {
-                if (rl.checkCollisionCircles(x.position, radius, y.position, radius)) {
-                    const collisionRad = y.position.distance(x.position) - 2 * radius;
-                    const dir = y.position.subtract(x.position).scale(collisionRad / 2);
-                    x.position = x.position.add(dir);
-                    y.position = y.position.subtract(dir);
-                }
-            }
-        }
     }
     fn addRandomEnemy(self: *Evil) !void {
         try self.enemies.append(Enemy{
@@ -211,9 +256,9 @@ const Enemy = struct {
     position: rl.Vector2,
     health: i32,
     fn draw(self: *const Enemy) void {
-        const start = rl.Vector3.init(self.position.x, radius, self.position.y);
-        const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
-        rl.drawCapsule(start, end, radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
+        const start = rl.Vector3.init(self.position.x, config.character.radius, self.position.y);
+        const end = rl.Vector3.init(self.position.x, config.character.height - config.character.radius, self.position.y);
+        rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
             @as(f32, @floatFromInt(self.health)) / 100.0,
             0,
             0.2,
@@ -221,22 +266,34 @@ const Enemy = struct {
         )));
     }
     fn update(self: *Enemy, target: *const Player) void {
-        const displacement = target.position.subtract(self.position).normalize().scale(0.05);
-        self.position = rl.Vector2.add(self.position, displacement);
+        self.position = target.position
+            .subtract(self.position)
+            .normalize().scale(config.character.speed * config.enemy.speedFactor)
+            .add(self.position);
     }
 };
 
-const Dir = enum { Vertical, Horizontal };
+const Dir = enum {
+    Vertical,
+    Horizontal,
+    fn toVec(self: Dir) rl.Vector2 {
+        return switch (self) {
+            Dir.Vertical => rl.Vector2.init(0, 1),
+            Dir.Horizontal => rl.Vector2.init(1, 0),
+        };
+    }
+};
 
 const Wall = struct {
     position: rl.Vector2,
+    dir: Dir,
     size: rl.Vector3,
     fn init(pos: rl.Vector2, dir: Dir) Wall {
         const size = switch (dir) {
-            Dir.Horizontal => rl.Vector3.init(3, 2, 0.2),
-            Dir.Vertical => rl.Vector3.init(0.2, 2, 3),
+            Dir.Horizontal => rl.Vector3.init(config.wall.length, config.wall.height, config.wall.thickness),
+            Dir.Vertical => rl.Vector3.init(config.wall.thickness, config.wall.height, config.wall.length),
         };
-        return .{ .position = pos, .size = size };
+        return .{ .position = pos, .size = size, .dir = dir };
     }
     fn draw(self: *const Wall) void {
         const pos = rl.Vector3.init(self.position.x, 1, self.position.y);
@@ -250,7 +307,7 @@ const Dungeon = struct {
         var walls = std.ArrayList(Wall).init(allocator);
         var x: f32 = 0;
         var y: f32 = 0;
-        for (map) |c| {
+        for (config.map) |c| {
             switch (c) {
                 '\n' => {
                     x = 0;
@@ -301,10 +358,11 @@ const World = struct {
     }
     fn update(self: *World, movement: Controler) !void {
         self.player.update(movement);
-        try doShooting(&movement, &self.gun, &self.player);
         self.gun.update();
         self.evil.update(&self.player);
-        checkCollisions(&self.gun, &self.evil);
+        try doShooting(&movement, &self.gun, &self.player);
+        checkBulletCollision(&self.gun, &self.evil);
+        checkCharacterCollision(&self.evil, &self.player, &self.dungeon);
     }
     fn draw(self: *const World) void {
         self.player.camera.begin();
