@@ -206,13 +206,83 @@ const Enemy = struct {
         rl.drawCapsule(start, end, radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
             @as(f32, @floatFromInt(self.health)) / 100.0,
             0,
-            0,
+            0.2,
             1,
         )));
     }
     fn update(self: *Enemy) void {
         const displacement = self.target.position.subtract(self.position).normalize().scale(0.05);
         self.position = rl.Vector2.add(self.position, displacement);
+    }
+};
+
+const Dir = enum { Vertical, Horizontal };
+
+const Wall = struct {
+    position: rl.Vector2,
+    size: rl.Vector3,
+    fn init(pos: rl.Vector2, dir: Dir) Wall {
+        const size = switch (dir) {
+            Dir.Horizontal => rl.Vector3.init(3, 2, 0.2),
+            Dir.Vertical => rl.Vector3.init(0.2, 2, 3),
+        };
+        return .{ .position = pos, .size = size };
+    }
+    fn draw(self: *const Wall) void {
+        const pos = rl.Vector3.init(self.position.x, 1, self.position.y);
+        rl.drawCubeV(pos, self.size, rl.Color.dark_blue);
+    }
+};
+
+const map =
+    \\| |_| |_|
+    \\| |  _  |
+    \\| |_ _| |
+    \\|_______|
+;
+// const map =
+//     \\ _ _ _
+//     \\|_|_|_|
+//     \\|_|_|_|
+//     \\|_|_|_|
+// ;
+const Dungeon = struct {
+    walls: std.ArrayList(Wall),
+    rng: std.rand.DefaultPrng,
+    fn init(allocator: std.mem.Allocator) !Dungeon {
+        var walls = std.ArrayList(Wall).init(allocator);
+        var x: f32 = 0;
+        var y: f32 = 0;
+        for (map) |c| {
+            switch (c) {
+                '\n' => {
+                    x = 0;
+                    y += 1;
+                },
+                '|' => {
+                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5);
+                    try walls.append(Wall.init(pos, Dir.Vertical));
+                    x += 1;
+                },
+                '_' => {
+                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5 + 1.5);
+                    try walls.append(Wall.init(pos, Dir.Horizontal));
+                    x += 1;
+                },
+                else => {
+                    x += 1;
+                },
+            }
+        }
+        return .{
+            .walls = walls,
+            .rng = std.rand.DefaultPrng.init(0),
+        };
+    }
+    fn draw(self: *const Dungeon) void {
+        for (self.walls.items) |w| {
+            w.draw();
+        }
     }
 };
 
@@ -228,6 +298,8 @@ pub fn main() anyerror!void {
     try evil.addRandomEnemy();
     try evil.addRandomEnemy();
     defer rl.closeWindow();
+
+    var dungeon = try Dungeon.init(arena.allocator());
 
     // rl.disableCursor();
     rl.setTargetFPS(60);
@@ -257,6 +329,7 @@ pub fn main() anyerror!void {
             player.draw();
             gun.draw();
             evil.draw();
+            dungeon.draw();
         }
     }
 }
