@@ -1,17 +1,17 @@
 const rl = @import("raylib");
 const std = @import("std");
 
-// all speeds are in units per frame
+// speeds is in units per frame, rate is in objects per second
 const config = .{
     .wall = .{ .length = 3, .height = 2, .thickness = 0.2 },
     .character = .{ .radius = 0.5, .height = 2, .speed = 0.1 },
-    .bullet = .{ .speed = 0.2, .damage = 5, .rate = 3.0 },
-    .enemy = .{ .speedFactor = 0.6 },
-    .map =
-    \\| |_| |_|
+    .bullet = .{ .speed = 0.2, .damage = 10, .rate = 10.0 },
+    .enemy = .{ .speedFactor = 0.6, .spawnRate = 0.5, .health = 50 },
+    .map = // problem with colliding s and _, problem with empty
+    \\|s|_| |_|
     \\| |  _  |
     \\| |_ _| |
-    \\|_______|
+    \\|_ _ _ _|
     ,
 };
 // const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
@@ -22,20 +22,17 @@ const Controler = struct {
     delta: rl.Vector2,
 
     fn getInput() Controler {
-        var vec = rl.Vector2.init(0, 0);
         var shoot = false;
-        if (rl.isKeyDown(rl.KeyboardKey.key_w)) {
-            vec.y += 1;
-        }
-        if (rl.isKeyDown(rl.KeyboardKey.key_s)) {
-            vec.y -= 1;
-        }
-        if (rl.isKeyDown(rl.KeyboardKey.key_a)) {
-            vec.x += 1;
-        }
-        if (rl.isKeyDown(rl.KeyboardKey.key_d)) {
-            vec.x -= 1;
-        }
+        const bindings = [_]struct { rl.KeyboardKey, rl.Vector2 }{
+            .{ rl.KeyboardKey.key_w, .{ .x = 0, .y = 1 } },
+            .{ rl.KeyboardKey.key_s, .{ .x = 0, .y = -1 } },
+            .{ rl.KeyboardKey.key_a, .{ .x = 1, .y = 0 } },
+            .{ rl.KeyboardKey.key_d, .{ .x = -1, .y = 0 } },
+        };
+        const vec = for (bindings) |kv| {
+            if (rl.isKeyDown(kv[0])) break kv[1];
+        } else rl.Vector2{ .x = 0, .y = 0 };
+
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space)) {
             shoot = true;
         }
@@ -193,7 +190,7 @@ fn staticCollide(wall: *const Wall, x: anytype) void {
     }
 }
 
-fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *Dungeon) void {
+fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *const Dungeon) void {
     for (evil.enemies.items) |*x| {
         for (evil.enemies.items) |*y| {
             dynamicCollide(x, y);
@@ -237,24 +234,21 @@ const Evil = struct {
             e.update(target);
         }
     }
-    fn addRandomEnemy(self: *Evil) !void {
-        try self.enemies.append(Enemy{
-            .health = 100,
-            .position = rl.Vector2.init(
-                @floatFromInt(self.rng.random().intRangeAtMost(i32, 2, 5)),
-                @floatFromInt(self.rng.random().intRangeAtMost(i32, 2, 5)),
-            ),
-        });
+    fn add(self: *Evil, enemy: Enemy) !void {
+        try self.enemies.append(enemy);
     }
 };
 const Enemy = struct {
     position: rl.Vector2,
-    health: i32,
+    health: u8,
+    fn init(position: rl.Vector2) Enemy {
+        return .{ .position = position, .health = config.enemy.health };
+    }
     fn draw(self: *const Enemy) void {
         const start = rl.Vector3.init(self.position.x, config.character.radius, self.position.y);
         const end = rl.Vector3.init(self.position.x, config.character.height - config.character.radius, self.position.y);
         rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
-            @as(f32, @floatFromInt(self.health)) / 100.0,
+            @as(f32, @floatFromInt(self.health)) / @as(f32, config.enemy.health),
             0,
             0.2,
             1,
@@ -295,36 +289,54 @@ const Wall = struct {
         rl.drawCubeV(pos, self.size, rl.Color.dark_blue);
     }
 };
+fn Spawner(what: type) type {
+    return struct {
+        position: rl.Vector2,
+        nextSpawn: f64,
+        fn init(position: rl.Vector2) Spawner(what) {
+            return .{ .position = position, .nextSpawn = 0.0 };
+        }
+        fn spawn(self: *Spawner(what)) ?what {
+            if (rl.getTime() < self.nextSpawn) return null;
+            self.nextSpawn = rl.getTime() + 1.0 / config.enemy.spawnRate;
+            return what.init(self.position);
+        }
+    };
+}
 const Dungeon = struct {
     walls: std.ArrayList(Wall),
+    spawners: std.ArrayList(Spawner(Enemy)),
     rng: std.rand.DefaultPrng,
     fn init(allocator: std.mem.Allocator) !Dungeon {
         var walls = std.ArrayList(Wall).init(allocator);
+        var spawners = std.ArrayList(Spawner(Enemy)).init(allocator);
         var x: f32 = 0;
         var y: f32 = 0;
         for (config.map) |c| {
             switch (c) {
                 '\n' => {
-                    x = 0;
+                    x = -1;
                     y += 1;
                 },
                 '|' => {
                     const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5);
                     try walls.append(Wall.init(pos, Dir.Vertical));
-                    x += 1;
                 },
                 '_' => {
                     const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5 + 1.5);
                     try walls.append(Wall.init(pos, Dir.Horizontal));
-                    x += 1;
                 },
-                else => {
-                    x += 1;
+                's' => {
+                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5);
+                    try spawners.append(Spawner(Enemy).init(pos));
                 },
+                else => {},
             }
+            x += 1;
         }
         return .{
             .walls = walls,
+            .spawners = spawners,
             .rng = std.rand.DefaultPrng.init(0),
         };
     }
@@ -341,17 +353,19 @@ const World = struct {
     evil: Evil,
     dungeon: Dungeon,
     fn init(arena: *std.heap.ArenaAllocator) !World {
-        var world = .{
+        return .{
             .player = Player.init(),
             .gun = Gun.init(arena.allocator()),
             .evil = Evil.init(arena.allocator()),
             .dungeon = try Dungeon.init(arena.allocator()),
         };
-        try world.evil.addRandomEnemy();
-        try world.evil.addRandomEnemy();
-        return world;
     }
     fn update(self: *World, movement: Controler) !void {
+        for (self.dungeon.spawners.items) |*spawner| {
+            if (spawner.spawn()) |enemy| {
+                try self.evil.add(enemy);
+            }
+        }
         self.player.update(movement);
         self.gun.update();
         self.evil.update(&self.player);
