@@ -1,6 +1,25 @@
 const rl = @import("raylib");
 const std = @import("std");
 
+const radius = 0.5;
+const FireRate = 3.0; // in bullets per second
+const BulletSpeed = 0.2; // in units per frame
+const PlayerSpeed = 0.1; // in units per frame
+const height = 2; // player and enemy height
+const dmg = 5;
+const map =
+    \\| |_| |_|
+    \\| |  _  |
+    \\| |_ _| |
+    \\|_______|
+;
+// const map =
+//     \\ _ _ _
+//     \\|_|_|_|
+//     \\|_|_|_|
+//     \\|_|_|_|
+// ;
+
 const Controler = struct {
     shoot: bool,
     direction: rl.Vector2,
@@ -10,20 +29,21 @@ const Controler = struct {
         var vec = rl.Vector2.init(0, 0);
         var shoot = false;
         if (rl.isKeyDown(rl.KeyboardKey.key_w)) {
-            vec.y += 0.1;
+            vec.y += 1;
         }
         if (rl.isKeyDown(rl.KeyboardKey.key_s)) {
-            vec.y -= 0.1;
+            vec.y -= 1;
         }
         if (rl.isKeyDown(rl.KeyboardKey.key_a)) {
-            vec.x += 0.1;
+            vec.x += 1;
         }
         if (rl.isKeyDown(rl.KeyboardKey.key_d)) {
-            vec.x -= 0.1;
+            vec.x -= 1;
         }
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space)) {
             shoot = true;
         }
+        vec = vec.normalize().scale(PlayerSpeed);
         var dir = rl.getMousePosition();
         dir.x -= @as(f32, @floatFromInt(rl.getScreenWidth())) / 2;
         dir.y -= @as(f32, @floatFromInt(rl.getScreenHeight())) / 2;
@@ -35,7 +55,6 @@ const Controler = struct {
     }
 };
 
-const radius = 0.5;
 const Player = struct {
     position: rl.Vector2,
     camera: rl.Camera3D,
@@ -52,7 +71,6 @@ const Player = struct {
         };
     }
     fn draw(self: *const Player) void {
-        const height = 2;
         const start = rl.Vector3.init(self.position.x, radius, self.position.y);
         const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
         rl.drawCapsule(start, end, radius, 10, 1, rl.Color.light_gray);
@@ -78,8 +96,6 @@ const Bullet = struct {
 };
 const Alive: Bullet = Bullet{ .pos = undefined, .dir = undefined, .deathTime = 0 };
 
-const FireRate = 3.0; // in bullets per second
-const BulletSpeed = 0.2; // in units per frame
 const Gun = struct {
     bullets: std.PriorityQueue(Bullet, void, Bullet.compare),
     lastFired: f64,
@@ -128,7 +144,6 @@ const Gun = struct {
     }
 };
 
-const dmg = 5;
 fn checkCollisions(gun: *Gun, evil: *Evil) void {
     for (gun.bullets.items, 0..) |bullet, bulletI| {
         for (evil.enemies.items, 0..) |*enemy, enemyI| {
@@ -156,12 +171,10 @@ fn doShooting(controler: *const Controler, bullets: *Gun, player: *const Player)
 const Evil = struct {
     enemies: std.ArrayList(Enemy),
     rng: std.rand.DefaultPrng,
-    target: *const Player,
-    fn init(allocator: std.mem.Allocator, target: *const Player) Evil {
+    fn init(allocator: std.mem.Allocator) Evil {
         return .{
             .enemies = std.ArrayList(Enemy).init(allocator),
             .rng = std.rand.DefaultPrng.init(0),
-            .target = target,
         };
     }
     fn draw(self: *const Evil) void {
@@ -169,9 +182,9 @@ const Evil = struct {
             e.draw();
         }
     }
-    fn update(self: *Evil) void {
+    fn update(self: *Evil, target: *const Player) void {
         for (self.enemies.items) |*e| {
-            e.update();
+            e.update(target);
         }
         for (self.enemies.items) |*x| {
             for (self.enemies.items) |*y| {
@@ -186,7 +199,6 @@ const Evil = struct {
     }
     fn addRandomEnemy(self: *Evil) !void {
         try self.enemies.append(Enemy{
-            .target = self.target,
             .health = 100,
             .position = rl.Vector2.init(
                 @floatFromInt(self.rng.random().intRangeAtMost(i32, 2, 5)),
@@ -198,9 +210,7 @@ const Evil = struct {
 const Enemy = struct {
     position: rl.Vector2,
     health: i32,
-    target: *const Player,
     fn draw(self: *const Enemy) void {
-        const height = 2;
         const start = rl.Vector3.init(self.position.x, radius, self.position.y);
         const end = rl.Vector3.init(self.position.x, height - radius, self.position.y);
         rl.drawCapsule(start, end, radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
@@ -210,8 +220,8 @@ const Enemy = struct {
             1,
         )));
     }
-    fn update(self: *Enemy) void {
-        const displacement = self.target.position.subtract(self.position).normalize().scale(0.05);
+    fn update(self: *Enemy, target: *const Player) void {
+        const displacement = target.position.subtract(self.position).normalize().scale(0.05);
         self.position = rl.Vector2.add(self.position, displacement);
     }
 };
@@ -233,19 +243,6 @@ const Wall = struct {
         rl.drawCubeV(pos, self.size, rl.Color.dark_blue);
     }
 };
-
-const map =
-    \\| |_| |_|
-    \\| |  _  |
-    \\| |_ _| |
-    \\|_______|
-;
-// const map =
-//     \\ _ _ _
-//     \\|_|_|_|
-//     \\|_|_|_|
-//     \\|_|_|_|
-// ;
 const Dungeon = struct {
     walls: std.ArrayList(Wall),
     rng: std.rand.DefaultPrng,
@@ -286,50 +283,64 @@ const Dungeon = struct {
     }
 };
 
+const World = struct {
+    player: Player,
+    gun: Gun,
+    evil: Evil,
+    dungeon: Dungeon,
+    fn init(arena: *std.heap.ArenaAllocator) !World {
+        var world = .{
+            .player = Player.init(),
+            .gun = Gun.init(arena.allocator()),
+            .evil = Evil.init(arena.allocator()),
+            .dungeon = try Dungeon.init(arena.allocator()),
+        };
+        try world.evil.addRandomEnemy();
+        try world.evil.addRandomEnemy();
+        return world;
+    }
+    fn update(self: *World, movement: Controler) !void {
+        self.player.update(movement);
+        try doShooting(&movement, &self.gun, &self.player);
+        self.gun.update();
+        self.evil.update(&self.player);
+        checkCollisions(&self.gun, &self.evil);
+    }
+    fn draw(self: *const World) void {
+        self.player.camera.begin();
+        defer self.player.camera.end();
+
+        for (0..100) |i| {
+            for (0..100) |j| {
+                const x: f32 = @floatFromInt(i);
+                const z: f32 = @floatFromInt(j);
+                rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
+            }
+        }
+        self.player.draw();
+        self.gun.draw();
+        self.evil.draw();
+        self.dungeon.draw();
+    }
+};
+
 pub fn main() anyerror!void {
+    rl.initWindow(1600, 900, "Zorsh");
+    defer rl.closeWindow();
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var player = Player.init();
-    var gun = Gun.init(arena.allocator());
-
-    rl.initWindow(1600, 900, "Zorsh");
-    var evil = Evil.init(arena.allocator(), &player);
-    try evil.addRandomEnemy();
-    try evil.addRandomEnemy();
-    defer rl.closeWindow();
-
-    var dungeon = try Dungeon.init(arena.allocator());
+    var world = try World.init(&arena);
 
     // rl.disableCursor();
     rl.setTargetFPS(60);
     while (!rl.windowShouldClose()) {
-        const movement = Controler.getInput();
-        player.update(movement);
-        try doShooting(&movement, &gun, &player);
-        gun.update();
-        evil.update();
-        checkCollisions(&gun, &evil);
-        // camera.update(rl.CameraMode.camera_third_person);
+        try world.update(Controler.getInput());
 
         rl.beginDrawing();
         defer rl.endDrawing();
         rl.clearBackground(rl.Color.ray_white);
-        { // 3D drawing
-            player.camera.begin();
-            defer player.camera.end();
-
-            for (0..100) |i| {
-                for (0..100) |j| {
-                    const x: f32 = @floatFromInt(i);
-                    const z: f32 = @floatFromInt(j);
-                    rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
-                }
-            }
-            player.draw();
-            gun.draw();
-            evil.draw();
-            dungeon.draw();
-        }
+        world.draw();
     }
 }
