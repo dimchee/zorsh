@@ -3,16 +3,29 @@ const std = @import("std");
 
 // speeds is in units per frame, rate is in objects per second
 pub const config = .{
-    .wall = .{ .length = 3, .height = 2, .thickness = 0.2 },
+    .wall = .{ .height = 2, .size = 1 },
     .character = .{ .radius = 0.5, .height = 2, .speed = 0.1 },
     .bullet = .{ .speed = 0.2, .damage = 10, .rate = 10.0, .lifetime = 2 },
     .player = .{ .health = 100, .reward = 1 },
     .enemy = .{ .speedFactor = 0.6, .spawnRate = 0.5, .health = 50, .damage = 2 },
-    .map = // problem with colliding s and _, problem with empty
-    \\|s|_| |_|
-    \\| |  _  |
-    \\| |_ _| |
-    \\|_ _ _ _|
+    .map =
+    \\ [][][][][][][][][][][][][][][][][][][][]
+    \\ []                                    []
+    \\ []                 s                  []
+    \\ []                                    []
+    \\ [][]    [][][][][][][][][]  [][][][][][]
+    \\ []           []                       []
+    \\ []           []          s            []
+    \\ []           []                       []
+    \\ [][]    [][][][][][][][]      [][][][][]
+    \\ []                []                  []
+    \\ []       p        []                  []
+    \\ []                []                  []
+    \\ [][][][][]    [][][][][][][]    [][][][]
+    \\ []                                    []
+    \\ []                                    []
+    \\ []                                    []
+    \\ [][][][][][][][][][][][][][][][][][][][]
     ,
 };
 // const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
@@ -54,12 +67,16 @@ const Player = struct {
     position: rl.Vector2,
     camera: rl.Camera3D,
     cameraDelta: rl.Vector3,
-    fn init() Player {
+    fn init(cells: std.ArrayList(Cell)) Player {
         const cameraDelta = rl.Vector3.init(0, 10, 4);
+        const pos = for (cells.items) |cell| {
+            if (cell.type == CellType.Player)
+                break cell.position();
+        } else rl.Vector2.init(0, 0);
         return .{
             .health = config.player.health,
             .score = 0,
-            .position = rl.Vector2.init(0, 0),
+            .position = pos,
             .cameraDelta = cameraDelta,
             .camera = rl.Camera3D{
                 .position = cameraDelta,
@@ -275,27 +292,11 @@ const Enemy = struct {
     }
 };
 
-const Dir = enum {
-    Vertical,
-    Horizontal,
-    fn toVec(self: Dir) rl.Vector2 {
-        return switch (self) {
-            Dir.Vertical => rl.Vector2.init(0, 1),
-            Dir.Horizontal => rl.Vector2.init(1, 0),
-        };
-    }
-};
-
 const Wall = struct {
     position: rl.Vector2,
-    dir: Dir,
     size: rl.Vector3,
-    fn init(pos: rl.Vector2, dir: Dir) Wall {
-        const size = switch (dir) {
-            Dir.Horizontal => rl.Vector3.init(config.wall.length, config.wall.height, config.wall.thickness),
-            Dir.Vertical => rl.Vector3.init(config.wall.thickness, config.wall.height, config.wall.length),
-        };
-        return .{ .position = pos, .size = size, .dir = dir };
+    fn init(pos: rl.Vector2) Wall {
+        return .{ .position = pos, .size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size) };
     }
     fn draw(self: *const Wall) void {
         const pos = rl.Vector3.init(self.position.x, 1, self.position.y);
@@ -316,36 +317,50 @@ fn Spawner(what: type) type {
         }
     };
 }
+
+const CellType = enum { Wall, Player, Spawner };
+const Cell = struct {
+    type: CellType,
+    x: i32,
+    y: i32,
+    fn position(self: *const Cell) rl.Vector2 {
+        return rl.Vector2.init(@floatFromInt(self.x), @floatFromInt(self.y));
+    }
+};
+
+fn mapToCells(allocator: std.mem.Allocator) !std.ArrayList(Cell) {
+    var cells = std.ArrayList(Cell).init(allocator);
+    var pos: struct { i32, i32 } = .{ 0, 0 };
+    var last: u8 = '\n';
+    for (config.map) |c| {
+        const cell: ?CellType = switch (c) {
+            ']' => if (last == '[') CellType.Wall else null,
+            'p' => if (last != 'p') CellType.Player else null,
+            's' => if (last != 's') CellType.Spawner else null,
+            else => null,
+        };
+        if (cell) |t| {
+            try cells.append(Cell{ .type = t, .x = @divTrunc(pos[0], 2), .y = pos[1] });
+        }
+        last = c;
+        pos = if (c == '\n') .{ 0, pos[1] + 1 } else .{ pos[0] + 1, pos[1] };
+    }
+    return cells;
+}
+
 const Dungeon = struct {
     walls: std.ArrayList(Wall),
     spawners: std.ArrayList(Spawner(Enemy)),
     rng: std.rand.DefaultPrng,
-    fn init(allocator: std.mem.Allocator) !Dungeon {
+    fn init(allocator: std.mem.Allocator, cells: std.ArrayList(Cell)) !Dungeon {
         var walls = std.ArrayList(Wall).init(allocator);
         var spawners = std.ArrayList(Spawner(Enemy)).init(allocator);
-        var x: f32 = 0;
-        var y: f32 = 0;
-        for (config.map) |c| {
-            switch (c) {
-                '\n' => {
-                    x = -1;
-                    y += 1;
-                },
-                '|' => {
-                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5);
-                    try walls.append(Wall.init(pos, Dir.Vertical));
-                },
-                '_' => {
-                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5 + 1.5);
-                    try walls.append(Wall.init(pos, Dir.Horizontal));
-                },
-                's' => {
-                    const pos = rl.Vector2.init(1.5 * x + 0.5, 3 * y + 0.5);
-                    try spawners.append(Spawner(Enemy).init(pos));
-                },
-                else => {},
+        for (cells.items) |cell| {
+            switch (cell.type) {
+                CellType.Wall => try walls.append(Wall.init(cell.position())),
+                CellType.Spawner => try spawners.append(Spawner(Enemy).init(cell.position())),
+                CellType.Player => {},
             }
-            x += 1;
         }
         return .{
             .walls = walls,
@@ -367,12 +382,13 @@ pub const World = struct {
     evil: Evil,
     dungeon: Dungeon,
     pub fn init(allocator: std.mem.Allocator) !World {
+        const cells = try mapToCells(allocator);
         return .{
             .allocator = allocator,
-            .player = Player.init(),
+            .player = Player.init(cells),
             .gun = Gun.init(allocator),
             .evil = Evil.init(allocator),
-            .dungeon = try Dungeon.init(allocator),
+            .dungeon = try Dungeon.init(allocator, cells),
         };
     }
     pub fn update(self: *World) !void {

@@ -63,7 +63,11 @@ pub fn main() anyerror!void {
     font.baseSize = 2;
     rg.guiSetFont(font);
 
-    var state = State.init(allocator);
+    var state = State{
+        .state = .{ .running = try game.World.init(allocator) },
+        .allocator = allocator,
+    };
+    // var state = State.init(allocator);
 
     // rl.disableCursor();
     rl.setTargetFPS(60);
