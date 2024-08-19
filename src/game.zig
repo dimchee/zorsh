@@ -67,11 +67,12 @@ const Player = struct {
     position: rl.Vector2,
     camera: rl.Camera3D,
     cameraDelta: rl.Vector3,
-    fn init(cells: std.ArrayList(Cell)) Player {
+    fn init(cells: std.AutoHashMap(Position, Cell)) Player {
         const cameraDelta = rl.Vector3.init(0, 10, 4);
-        const pos = for (cells.items) |cell| {
-            if (cell.type == CellType.Player)
-                break cell.position();
+        var it = cells.iterator();
+        const pos = while (it.next()) |cell| {
+            if (cell.value_ptr.* == Cell.Player)
+                break cell.key_ptr.toVec2();
         } else rl.Vector2.init(0, 0);
         return .{
             .health = config.player.health,
@@ -247,11 +248,15 @@ fn doShooting(controller: *const Controller, bullets: *Gun, player: *const Playe
 
 const Evil = struct {
     enemies: std.ArrayList(Enemy),
+    cells: std.AutoHashMap(Position, Cell),
     rng: std.rand.DefaultPrng,
-    fn init(allocator: std.mem.Allocator) Evil {
+    allocator: std.mem.Allocator,
+    fn init(allocator: std.mem.Allocator, cells: std.AutoHashMap(Position, Cell)) Evil {
         return .{
+            .allocator = allocator,
             .enemies = std.ArrayList(Enemy).init(allocator),
             .rng = std.rand.DefaultPrng.init(0),
+            .cells = cells,
         };
     }
     fn draw(self: *const Evil) void {
@@ -259,9 +264,32 @@ const Evil = struct {
             e.draw();
         }
     }
-    fn update(self: *Evil, target: *const Player) void {
+    fn update(self: *Evil, target: *const Player) !void {
+        var hints = std.AutoHashMap(Position, Position).init(self.allocator);
+        var q = std.DoublyLinkedList(struct { from: Position, to: Position }){};
+        var nodes: [10000]@TypeOf(q).Node = undefined;
+        var ind: u32 = 0;
+        var pos = Position.fromVec2(target.position);
+        nodes[ind] = .{ .data = .{ .from = pos, .to = pos } };
+        q.prepend(&nodes[ind]);
+        ind += 1;
+        while (q.pop()) |hint| {
+            pos = hint.data.to;
+            if (self.cells.get(pos)) |x|
+                if (x == Cell.Wall) continue;
+            if (hints.contains(pos)) continue;
+            try hints.put(pos, hint.data.from);
+            const dxs = [_]i8{ 1, 1, 0, -1, -1, -1, 0, 1 };
+            const dys = [_]i8{ 0, 1, 1, 1, 0, -1, -1, -1 };
+            for (dxs, dys) |dx, dy| {
+                const to = .{ .x = pos.x + dx, .y = pos.y + dy };
+                nodes[ind] = .{ .data = .{ .from = pos, .to = to } };
+                q.prepend(&nodes[ind]);
+                ind += 1;
+            }
+        }
         for (self.enemies.items) |*e| {
-            e.update(target);
+            e.update(hints.get(Position.fromVec2(e.position)).?.toVec2());
         }
     }
     fn add(self: *Evil, enemy: Enemy) !void {
@@ -284,8 +312,8 @@ const Enemy = struct {
             1,
         )));
     }
-    fn update(self: *Enemy, target: *const Player) void {
-        self.position = target.position
+    fn update(self: *Enemy, target: rl.Vector2) void {
+        self.position = target
             .subtract(self.position)
             .normalize().scale(config.character.speed * config.enemy.speedFactor)
             .add(self.position);
@@ -318,32 +346,32 @@ fn Spawner(what: type) type {
     };
 }
 
-const CellType = enum { Wall, Player, Spawner };
-const Cell = struct {
-    type: CellType,
+const Cell = enum { Wall, Player, Spawner };
+const Position = struct {
     x: i32,
     y: i32,
-    fn position(self: *const Cell) rl.Vector2 {
+    fn toVec2(self: *const Position) rl.Vector2 {
         return rl.Vector2.init(@floatFromInt(self.x), @floatFromInt(self.y));
+    }
+    fn fromVec2(vec: rl.Vector2) Position {
+        return .{ .x = @intFromFloat(vec.x + 0.5), .y = @intFromFloat(vec.y + 0.5) };
     }
 };
 
-fn mapToCells(allocator: std.mem.Allocator) !std.ArrayList(Cell) {
-    var cells = std.ArrayList(Cell).init(allocator);
-    var pos: struct { i32, i32 } = .{ 0, 0 };
+fn mapToCells(allocator: std.mem.Allocator) !std.AutoHashMap(Position, Cell) {
+    var cells = std.AutoHashMap(Position, Cell).init(allocator);
+    var pos = Position{ .x = 0, .y = 0 };
     var last: u8 = '\n';
     for (config.map) |c| {
-        const cell: ?CellType = switch (c) {
-            ']' => if (last == '[') CellType.Wall else null,
-            'p' => if (last != 'p') CellType.Player else null,
-            's' => if (last != 's') CellType.Spawner else null,
+        const cell: ?Cell = switch (c) {
+            ']' => if (last == '[') Cell.Wall else null,
+            'p' => if (last != 'p') Cell.Player else null,
+            's' => if (last != 's') Cell.Spawner else null,
             else => null,
         };
-        if (cell) |t| {
-            try cells.append(Cell{ .type = t, .x = @divTrunc(pos[0], 2), .y = pos[1] });
-        }
+        if (cell) |t| try cells.put(.{ .x = @divTrunc(pos.x, 2), .y = pos.y }, t);
         last = c;
-        pos = if (c == '\n') .{ 0, pos[1] + 1 } else .{ pos[0] + 1, pos[1] };
+        pos = if (c == '\n') .{ .x = 0, .y = pos.y + 1 } else .{ .x = pos.x + 1, .y = pos.y };
     }
     return cells;
 }
@@ -352,14 +380,15 @@ const Dungeon = struct {
     walls: std.ArrayList(Wall),
     spawners: std.ArrayList(Spawner(Enemy)),
     rng: std.rand.DefaultPrng,
-    fn init(allocator: std.mem.Allocator, cells: std.ArrayList(Cell)) !Dungeon {
+    fn init(allocator: std.mem.Allocator, cells: std.AutoHashMap(Position, Cell)) !Dungeon {
         var walls = std.ArrayList(Wall).init(allocator);
         var spawners = std.ArrayList(Spawner(Enemy)).init(allocator);
-        for (cells.items) |cell| {
-            switch (cell.type) {
-                CellType.Wall => try walls.append(Wall.init(cell.position())),
-                CellType.Spawner => try spawners.append(Spawner(Enemy).init(cell.position())),
-                CellType.Player => {},
+        var it = cells.iterator();
+        while (it.next()) |cell| {
+            switch (cell.value_ptr.*) {
+                Cell.Wall => try walls.append(Wall.init(cell.key_ptr.toVec2())),
+                Cell.Spawner => try spawners.append(Spawner(Enemy).init(cell.key_ptr.toVec2())),
+                Cell.Player => {},
             }
         }
         return .{
@@ -387,7 +416,7 @@ pub const World = struct {
             .allocator = allocator,
             .player = Player.init(cells),
             .gun = Gun.init(allocator),
-            .evil = Evil.init(allocator),
+            .evil = Evil.init(allocator, cells),
             .dungeon = try Dungeon.init(allocator, cells),
         };
     }
@@ -400,7 +429,7 @@ pub const World = struct {
         }
         self.player.update(movement);
         self.gun.update();
-        self.evil.update(&self.player);
+        try self.evil.update(&self.player);
         try doShooting(&movement, &self.gun, &self.player);
         checkBulletCollision(&self.gun, &self.evil, &self.player);
         checkCharacterCollision(&self.evil, &self.player, &self.dungeon);

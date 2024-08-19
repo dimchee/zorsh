@@ -11,6 +11,6 @@
 - [x] simple UI
 - [ ] structure for bullets in gun
     - Closest circle to a given point in O(log(n))
-- [ ] smarter AI
+- [x] smarter AI
 - [ ] Blinn-Phong lighting
 - [ ] spotlights
