@@ -6,8 +6,11 @@
 - [x] terrain
 - [x] player capsule
 - [x] player controls
-- [ ] shooting
-- [ ] enemy AI
-- [ ] simple UI
+- [x] shooting
+- [x] enemy AI
+- [x] simple UI
 - [ ] structure for bullets in gun
     - Closest circle to a given point in O(log(n))
+- [ ] smarter AI
+- [ ] Blinn-Phong lighting
+- [ ] spotlights
