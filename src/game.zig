@@ -1,5 +1,6 @@
 const rl = @import("raylib");
 const std = @import("std");
+const coll = @import("collision.zig");
 
 // speeds is in units per frame, rate is in objects per second
 pub const config = .{
@@ -99,6 +100,12 @@ const Player = struct {
         self.camera.position = pos3d.add(self.cameraDelta);
         self.camera.target = pos3d;
     }
+    fn projectX(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.x - config.character.radius, .max = self.position.x + config.character.radius };
+    }
+    fn projectY(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.y - config.character.radius, .max = self.position.y + config.character.radius };
+    }
 };
 
 const Bullet = struct {
@@ -110,6 +117,12 @@ const Bullet = struct {
     }
     fn compare(_: void, a: Bullet, b: Bullet) std.math.Order {
         return std.math.order(a.deathTime, b.deathTime);
+    }
+    fn projectX(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.x - config.bullet.radius, .max = self.position.x + config.bullet.radius };
+    }
+    fn projectY(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.y - config.bullet.radius, .max = self.position.y + config.bullet.radius };
     }
 };
 
@@ -227,16 +240,6 @@ fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *const Dungeon
     staticCollide(dungeon, player);
 }
 
-fn doShooting(controller: *const Controller, bullets: *Gun, player: *const Player) !void {
-    if (controller.shoot) {
-        try bullets.fire(Bullet{
-            .position = player.position,
-            .dir = controller.direction,
-            .deathTime = rl.getTime() + config.bullet.lifetime,
-        });
-    }
-}
-
 const Evil = struct {
     enemies: std.ArrayList(Enemy),
     cells: std.AutoHashMap(Position, Cell),
@@ -309,9 +312,14 @@ const Enemy = struct {
             .normalize().scale(config.character.speed * config.enemy.speedFactor)
             .add(self.position);
     }
+    fn projectX(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.x - config.character.radius, .max = self.position.x + config.character.radius };
+    }
+    fn projectY(self: *const Wall) coll.Segment {
+        return .{ .min = self.position.y - config.character.radius, .max = self.position.y + config.character.radius };
+    }
 };
 
-const Segment = struct { min: f32, max: f32 };
 const Wall = struct {
     position: rl.Vector2,
     size: rl.Vector3,
@@ -330,10 +338,10 @@ const Wall = struct {
             @min(p.y - rect.min.y, 0) + @max(p.y - rect.max.y, 0),
         );
     }
-    fn projectX(self: *const Wall) Segment {
+    fn projectX(self: *const Wall) coll.Segment {
         return .{ .min = self.position.x - self.size.x / 2, .max = self.position.x + self.size.x / 2 };
     }
-    fn projectY(self: *const Wall) Segment {
+    fn projectY(self: *const Wall) coll.Segment {
         return .{ .min = self.position.y - self.size.z / 2, .max = self.position.y + self.size.z / 2 };
     }
 };
@@ -439,7 +447,11 @@ pub const World = struct {
         self.player.update(movement);
         self.gun.update();
         try self.evil.update(&self.player);
-        try doShooting(&movement, &self.gun, &self.player);
+        if (movement.shoot) try self.gun.fire(Bullet{
+            .position = self.player.position,
+            .dir = movement.direction,
+            .deathTime = rl.getTime() + config.bullet.lifetime,
+        });
         checkBulletCollision(&self.gun, &self.evil, &self.player);
         checkCharacterCollision(&self.evil, &self.player, &self.dungeon);
     }

@@ -1,20 +1,13 @@
 const std = @import("std");
 
-const Segment = struct { min: f32, max: f32 };
+pub const Segment = struct { min: f32, max: f32 };
 const Collision = struct { usize, usize };
 const End = enum { Left, Right };
 const Edge = struct { tag: End, index: usize, value: f32 };
 
 const Collisions = std.AutoHashMap(Collision, void);
 
-fn collisionsToArray(colls: Collisions) !std.ArrayList(Collision) {
-    var sol = std.ArrayList(Collision).init(std.heap.page_allocator);
-    var iter = colls.keyIterator();
-    while (iter.next()) |x| try sol.append(x.*);
-    return sol;
-}
-
-fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Collision) {
+pub fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Collision) {
     var sol = std.ArrayList(Collision).init(allocator);
     var it = colls[0].keyIterator();
     while (it.next()) |x| {
@@ -26,7 +19,7 @@ fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Col
     return sol;
 }
 
-fn allCollisions(allocator: std.mem.Allocator, axisSegments: anytype) !std.ArrayList(Collision) {
+pub fn collisions(allocator: std.mem.Allocator, axisSegments: anytype) !std.ArrayList(Collision) {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var colls: [axisSegments.len]Collisions = undefined;
@@ -36,26 +29,28 @@ fn allCollisions(allocator: std.mem.Allocator, axisSegments: anytype) !std.Array
 }
 
 fn getCollisions(allocator: std.mem.Allocator, segments: []const Segment) !Collisions {
-    var collisions = Collisions.init(allocator);
+    var colls = Collisions.init(allocator);
     var edges = try std.ArrayList(Edge).initCapacity(allocator, 1000);
     defer edges.deinit();
     for (segments, 0..) |x, i| {
         try edges.append(Edge{ .index = i, .value = x.min, .tag = End.Left });
         try edges.append(Edge{ .index = i, .value = x.max, .tag = End.Right });
     }
-    for (0..edges.items.len) |ind| {
-        var i = ind;
-        while (i > 0) : (i -= 1) {
-            const x = &edges.items[i - 1];
-            const y = &edges.items[i];
-            if (x.value < y.value) break;
-            std.mem.swap(Edge, x, y);
-
-            if (x.tag == End.Left and y.tag == End.Right) try collisions.put(.{ x.index, y.index }, void{});
-            if (y.tag == End.Left and x.tag == End.Right) _ = collisions.remove(.{ x.index, y.index });
+    std.mem.sort(Edge, edges.items, {}, struct {
+        fn lessThan(_: void, x: Edge, y: Edge) bool {
+            return x.value < y.value;
         }
+    }.lessThan);
+    var touching = std.AutoHashMap(usize, void).init(allocator);
+    defer touching.deinit();
+    for (edges.items) |edge| {
+        if (edge.tag == End.Left) {
+            var iter = touching.keyIterator();
+            while (iter.next()) |other| try colls.put(.{ edge.index, other.* }, void{});
+            try touching.put(edge.index, void{});
+        } else _ = touching.remove(edge.index);
     }
-    return collisions;
+    return colls;
 }
 
 fn printEdges(edges: *const std.ArrayList(Edge)) void {
@@ -71,11 +66,12 @@ test "collisions1" {
         .{ .min = 0, .max = 5 },
     };
 
-    var sol = try allCollisions(std.testing.allocator, .{&demo_segments});
+    var sol = try collisions(std.testing.allocator, .{&demo_segments});
     defer sol.deinit();
     try std.testing.expectEqualDeep(
+        // &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
+        &[_]Collision{ .{ 1, 2 }, .{ 0, 1 }, .{ 0, 2 } },
         sol.items,
-        &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
     );
 }
 test "collisions2" {
@@ -85,11 +81,12 @@ test "collisions2" {
         .{ .min = 0, .max = 5 },
     };
 
-    var sol = try allCollisions(std.testing.allocator, .{&demo_segments});
+    var sol = try collisions(std.testing.allocator, .{&demo_segments});
     defer sol.deinit();
     try std.testing.expectEqualDeep(
+        // &[_]Collision{ .{ 2, 0 }, .{ 2, 1 } },
+        &[_]Collision{ .{ 1, 2 }, .{ 0, 2 } },
         sol.items,
-        &[_]Collision{ .{ 2, 0 }, .{ 2, 1 } },
     );
 }
 
@@ -100,11 +97,12 @@ test "collisions3" {
         .{ .min = 0, .max = 5 },
     };
 
-    var sol = try allCollisions(std.testing.allocator, .{&demo_segments});
+    var sol = try collisions(std.testing.allocator, .{&demo_segments});
     defer sol.deinit();
     try std.testing.expectEqualDeep(
+        // &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
+        &[_]Collision{ .{ 1, 2 }, .{ 0, 1 }, .{ 0, 2 } },
         sol.items,
-        &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
     );
 }
 test "intersection" {
@@ -124,8 +122,8 @@ test "intersection" {
     var sol = try intersection(std.testing.allocator, .{ map1, map2 });
     defer sol.deinit();
     try std.testing.expectEqualDeep(
-        sol.items,
         &[_]Collision{ .{ 1, 2 }, .{ 3, 4 } },
+        sol.items,
     );
 }
 
@@ -136,10 +134,11 @@ test "collisions4" {
         .{ .min = 0, .max = 5 },
     };
 
-    var sol = try allCollisions(std.testing.allocator, .{&demo_segments});
+    var sol = try collisions(std.testing.allocator, .{&demo_segments});
     defer sol.deinit();
     try std.testing.expectEqualDeep(
+        // &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
+        &[_]Collision{ .{ 1, 2 }, .{ 0, 1 }, .{ 0, 2 } },
         sol.items,
-        &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
     );
 }
