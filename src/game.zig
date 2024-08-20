@@ -9,23 +9,23 @@ pub const config = .{
     .player = .{ .health = 100, .reward = 1 },
     .enemy = .{ .speedFactor = 0.6, .spawnRate = 0.5, .health = 50, .damage = 2 },
     .map =
-    \\ [][][][][][][][][][][][][][][][][][][][]
-    \\ []                                    []
-    \\ []                 s                  []
-    \\ []                                    []
-    \\ [][]    [][][][][][][][][]  [][][][][][]
-    \\ []           []                       []
-    \\ []           []          s            []
-    \\ []           []                       []
-    \\ [][]    [][][][][][][][]      [][][][][]
-    \\ []                []                  []
-    \\ []       p        []                  []
-    \\ []                []                  []
-    \\ [][][][][]    [][][][][][][]    [][][][]
-    \\ []                                    []
-    \\ []                                    []
-    \\ []                                    []
-    \\ [][][][][][][][][][][][][][][][][][][][]
+    \\ [][][][][][][][][][][][][][][][][][][][][][][][][][]
+    \\ []                                                []
+    \\ []                zs                              []
+    \\ []                                    []          []
+    \\ [][]    [][][][][][][][][]  [][][][][][]          []
+    \\ []           []                       []          []
+    \\ []           []         zs            []          []
+    \\ []           []                       []          []
+    \\ [][]    [][][][][][][][]      [][][][][]          []
+    \\ []                []                  []          []
+    \\ []      ps        []                  []          []
+    \\ []                []                  []          []
+    \\ [][][][][]    [][][][][][][]    [][][][]          []
+    \\ []                                    []          []
+    \\ []                                                []
+    \\ []                                                []
+    \\ [][][][][][][][][][][][][][][][][][][][][][][][][][]
     ,
 };
 // const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
@@ -203,19 +203,12 @@ fn circlesCollisionDirection(a: Circle, b: Circle) rl.Vector2 {
     return a.center.subtract(b.center).normalize().scale(scale);
 }
 
-fn directionToWall(wall: *const Wall, p: rl.Vector2) rl.Vector2 {
-    const delta = rl.Vector2.init(wall.size.x / 2, wall.size.z / 2);
-    const rect = .{ .min = wall.position.subtract(delta), .max = wall.position.add(delta) };
-    return rl.Vector2.init(
-        @min(p.x - rect.min.x, 0) + @max(p.x - rect.max.x, 0),
-        @min(p.y - rect.min.y, 0) + @max(p.y - rect.max.y, 0),
-    );
-}
-
-fn staticCollide(wall: *const Wall, x: anytype) void {
-    const dir = directionToWall(wall, x.position);
-    if (dir.lengthSqr() < config.character.radius * config.character.radius) {
-        x.position = dir.normalize().scale(config.character.radius - dir.length()).add(x.position);
+fn staticCollide(dungeon: *const Dungeon, x: anytype) void {
+    for (dungeon.walls.items) |*wall| {
+        const dir = wall.directionTo(x.position);
+        if (dir.lengthSqr() < config.character.radius * config.character.radius) {
+            x.position = dir.normalize().scale(config.character.radius - dir.length()).add(x.position);
+        }
     }
 }
 
@@ -228,12 +221,10 @@ fn checkCharacterCollision(evil: *Evil, player: *Player, dungeon: *const Dungeon
             player.health = if (player.health < config.enemy.damage) 0 else player.health - config.enemy.damage;
         }
     }
-    for (dungeon.walls.items) |*static| {
-        for (evil.enemies.items) |*x| {
-            staticCollide(static, x);
-        }
-        staticCollide(static, player);
+    for (evil.enemies.items) |*x| {
+        staticCollide(dungeon, x);
     }
+    staticCollide(dungeon, player);
 }
 
 fn doShooting(controller: *const Controller, bullets: *Gun, player: *const Player) !void {
@@ -320,6 +311,7 @@ const Enemy = struct {
     }
 };
 
+const Segment = struct { min: f32, max: f32 };
 const Wall = struct {
     position: rl.Vector2,
     size: rl.Vector3,
@@ -329,6 +321,20 @@ const Wall = struct {
     fn draw(self: *const Wall) void {
         const pos = rl.Vector3.init(self.position.x, 1, self.position.y);
         rl.drawCubeV(pos, self.size, rl.Color.dark_blue);
+    }
+    fn directionTo(self: *const Wall, p: rl.Vector2) rl.Vector2 {
+        const delta = rl.Vector2.init(self.size.x / 2, self.size.z / 2);
+        const rect = .{ .min = self.position.subtract(delta), .max = self.position.add(delta) };
+        return rl.Vector2.init(
+            @min(p.x - rect.min.x, 0) + @max(p.x - rect.max.x, 0),
+            @min(p.y - rect.min.y, 0) + @max(p.y - rect.max.y, 0),
+        );
+    }
+    fn projectX(self: *const Wall) Segment {
+        return .{ .min = self.position.x - self.size.x / 2, .max = self.position.x + self.size.x / 2 };
+    }
+    fn projectY(self: *const Wall) Segment {
+        return .{ .min = self.position.y - self.size.z / 2, .max = self.position.y + self.size.z / 2 };
     }
 };
 fn Spawner(what: type) type {
@@ -365,8 +371,11 @@ fn mapToCells(allocator: std.mem.Allocator) !std.AutoHashMap(Position, Cell) {
     for (config.map) |c| {
         const cell: ?Cell = switch (c) {
             ']' => if (last == '[') Cell.Wall else null,
-            'p' => if (last != 'p') Cell.Player else null,
-            's' => if (last != 's') Cell.Spawner else null,
+            's' => switch (last) {
+                'p' => Cell.Player,
+                'z' => Cell.Spawner,
+                else => null,
+            },
             else => null,
         };
         if (cell) |t| try cells.put(.{ .x = @divTrunc(pos.x, 2), .y = pos.y }, t);
