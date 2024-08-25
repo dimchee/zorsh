@@ -63,92 +63,6 @@ const Controller = struct {
     }
 };
 
-const Bullet = struct {
-    position: rl.Vector2,
-    dir: rl.Vector2,
-    deathTime: f64,
-    fn isDead(self: *const Bullet) bool {
-        return self.deathTime < rl.getTime();
-    }
-    fn compare(_: void, a: Bullet, b: Bullet) std.math.Order {
-        return std.math.order(a.deathTime, b.deathTime);
-    }
-    fn projectX(self: *const Wall) coll.Segment {
-        return .{ .min = self.position.x - config.bullet.radius, .max = self.position.x + config.bullet.radius };
-    }
-    fn projectY(self: *const Wall) coll.Segment {
-        return .{ .min = self.position.y - config.bullet.radius, .max = self.position.y + config.bullet.radius };
-    }
-};
-
-const Gun = struct {
-    bullets: std.PriorityQueue(Bullet, void, Bullet.compare),
-    lastFired: f64,
-    fn isReadyToFire(self: Gun) bool {
-        return self.lastFired + 1.0 / config.bullet.rate < rl.getTime();
-    }
-    fn init(allocator: std.mem.Allocator) Gun {
-        return .{
-            .bullets = std.PriorityQueue(Bullet, void, Bullet.compare).init(allocator, {}),
-            .lastFired = rl.getTime(),
-        };
-    }
-    fn fire(self: *Gun, bullet: Bullet) !void {
-        if (self.isReadyToFire()) {
-            try self.bullets.add(bullet);
-            self.lastFired = rl.getTime();
-        }
-    }
-    fn closestBullet(self: *const Gun, point: rl.Vec2) usize {
-        var minSqrDist = std.math.floatMax(f32);
-        var minInd = 0;
-        for (self.bullets.items, 0..) |bullet, i| {
-            const dSqr = bullet.position.subtract(point).lengthSqr();
-            if (dSqr < minSqrDist) {
-                minSqrDist = dSqr;
-                minInd = i;
-            }
-        }
-        return minInd;
-    }
-    fn draw(self: *const Gun) void {
-        for (self.bullets.items) |bullet| {
-            const pos = rl.Vector3.init(bullet.position.x, 1.2, bullet.position.y);
-            rl.drawSphere(pos, 0.1, rl.Color.white);
-        }
-    }
-    fn update(self: *Gun) void {
-        if (self.bullets.peek()) |x| {
-            if (x.isDead()) {
-                _ = self.bullets.remove();
-            }
-        }
-        for (self.bullets.items) |*b| {
-            b.position = b.position.add(b.dir.normalize().scale(config.bullet.speed));
-        }
-    }
-};
-
-fn checkBulletCollision(gun: *Gun, evil: *Evil, playerScore: *Score) void {
-    for (gun.bullets.items, 0..) |bullet, bulletI| {
-        for (evil.enemies.items, 0..) |*enemy, enemyI| {
-            const dir = circlesCollisionDirection(
-                .{ .center = bullet.position, .radius = 0.1 },
-                .{ .center = enemy.position, .radius = config.character.radius },
-            );
-
-            if (dir.lengthSqr() > 0) {
-                if (enemy.health < config.bullet.damage) {
-                    _ = evil.enemies.swapRemove(enemyI);
-                    playerScore[0] += config.player.reward;
-                } else enemy.health -= config.bullet.damage;
-                _ = gun.bullets.removeIndex(bulletI);
-                return;
-            }
-        }
-    }
-}
-
 fn dynamicCollide(x: anytype, y: anytype) bool {
     const dir = circlesCollisionDirection(
         .{ .center = x.position, .radius = config.character.radius },
@@ -384,17 +298,17 @@ const Camera = struct { rl.Camera3D };
 const NewGun = struct { lastFired: f64 };
 const DeathTime = struct { f64 };
 const WallTag = struct {};
+const EnemyTag = struct {};
 
 const Player = .{ Transform, Camera, Health, Score, NewGun };
-const Bullet2 = .{ Transform, DeathTime };
-const Enemy2 = .{ Transform, Health };
+const Bullet = .{ Transform, DeathTime, Direction };
+const Enemy2 = .{ Transform, Health, EnemyTag };
 const Wall2 = .{ Transform, WallTag };
 
 // different max_entities for different entities
 pub const World = struct {
-    const Ecs = ecslib.Ecs(.{ Player, Bullet2, Enemy2, Wall2 });
+    const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy2, Wall2 });
     allocator: std.mem.Allocator,
-    gun: Gun,
     evil: Evil,
     dungeon: Dungeon,
     ecs: Ecs,
@@ -425,7 +339,6 @@ pub const World = struct {
         }
         return .{
             .allocator = allocator,
-            .gun = Gun.init(allocator),
             .evil = Evil.init(allocator, cells),
             .dungeon = try Dungeon.init(allocator, cells),
             .ecs = ecs,
@@ -444,45 +357,93 @@ pub const World = struct {
                 try self.evil.add(enemy);
             }
         }
-        var q = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: NewGun });
-        var it = q.iterator();
-        while (it.next()) |player| {
-            player.position.position = player.position.position.add(movement.delta);
-            const pos3d = rl.Vector3.init(player.position.position.x, 0, player.position.position.y);
-            player.camera[0].position = pos3d.add(config.player.cameraDelta);
-            player.camera[0].target = pos3d;
-            try self.evil.update(player.position.position);
-            if (movement.shoot) try self.gun.fire(Bullet{
-                .position = player.position.position,
-                .dir = movement.direction,
-                .deathTime = rl.getTime() + config.bullet.lifetime,
-            });
-            checkBulletCollision(&self.gun, &self.evil, player.score);
-            checkCharacterCollision(&self.evil, player.position, &self.dungeon, player.health);
-        }
-        // self.player.update(movement);
-        self.gun.update();
-    }
-    pub fn draw(self: *World) void {
-        var q = self.ecs.query(struct { health: Health, score: Score, position: *Transform, camera: *Camera, gun: NewGun });
-        var it = q.iterator();
-        while (it.next()) |player| {
-            player.camera[0].begin();
-            defer player.camera[0].end();
+        var playerQ = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: *NewGun });
+        var playerIt = playerQ.iterator();
+        var player = playerIt.next().?;
+        player.position.position = player.position.position.add(movement.delta);
+        const pos3d = rl.Vector3.init(player.position.position.x, 0, player.position.position.y);
+        player.camera[0].position = pos3d.add(config.player.cameraDelta);
+        player.camera[0].target = pos3d;
+        try self.evil.update(player.position.position);
 
-            for (0..100) |i| {
-                for (0..100) |j| {
-                    const x: f32 = @floatFromInt(i);
-                    const z: f32 = @floatFromInt(j);
-                    rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
+        if (movement.shoot) {
+            const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
+            if (isReadyToFire) {
+                self.ecs.add(.{
+                    Transform{ .position = player.position.position },
+                    DeathTime{rl.getTime() + config.bullet.lifetime},
+                    Direction{movement.direction},
+                });
+                player.gun.lastFired = rl.getTime();
+            }
+        }
+        {
+            var bq = self.ecs.query(struct { transform: Transform, deathTime: DeathTime });
+            var bIt = bq.iterator();
+            while (bIt.next()) |bullet| {
+                // var eQ = self.ecs.query(struct { transform: Transform, health: *Health, tag: EnemyTag });
+                // var eIt = eQ.iterator();
+                // while (eIt.next()) |enemy| {
+
+                for (self.evil.enemies.items, 0..) |*enemy, enemyI| {
+                    const dir = circlesCollisionDirection(
+                        .{ .center = bullet.transform.position, .radius = 0.1 },
+                        .{ .center = enemy.position, .radius = config.character.radius },
+                    );
+
+                    if (dir.lengthSqr() > 0) {
+                        if (enemy.health < config.bullet.damage) {
+                            // eIt.destroy(&self.ecs);
+                            _ = self.evil.enemies.swapRemove(enemyI);
+                            player.score[0] += config.player.reward;
+                        } else enemy.health -= config.bullet.damage;
+                        bIt.destroy(&self.ecs);
+                    }
                 }
             }
+        }
+        checkCharacterCollision(&self.evil, player.position, &self.dungeon, player.health);
+        {
+            var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
+            var bIt = bq.iterator();
+            while (bIt.next()) |bullet| {
+                if (bullet.deathTime[0] < rl.getTime()) bIt.destroy(&self.ecs);
+            }
+            bIt = bq.iterator();
+            while (bIt.next()) |bullet| {
+                bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
+            }
+        }
+    }
+    pub fn draw(self: *World) void {
+        var playerQ = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: *NewGun });
+        var playerIt = playerQ.iterator();
+        var player = playerIt.next().?;
+
+        player.camera[0].begin();
+        defer player.camera[0].end();
+
+        for (0..100) |i| {
+            for (0..100) |j| {
+                const x: f32 = @floatFromInt(i);
+                const z: f32 = @floatFromInt(j);
+                rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
+            }
+        }
+        {
             const start = rl.Vector3.init(player.position.position.x, config.character.radius, player.position.position.y);
             const end = rl.Vector3.init(player.position.position.x, config.character.height - config.character.radius, player.position.position.y);
             rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.light_gray);
-            self.gun.draw();
-            self.evil.draw();
-            self.dungeon.draw();
         }
+        {
+            var q = self.ecs.query(struct { transform: Transform, deathTime: DeathTime });
+            var it = q.iterator();
+            while (it.next()) |bullet| {
+                const pos = rl.Vector3.init(bullet.transform.position.x, 1.2, bullet.transform.position.y);
+                rl.drawSphere(pos, 0.1, rl.Color.white);
+            }
+        }
+        self.evil.draw();
+        self.dungeon.draw();
     }
 };
