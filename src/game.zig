@@ -94,101 +94,6 @@ fn staticCollide(dungeon: *const Dungeon, x: anytype) void {
     }
 }
 
-fn checkCharacterCollision(evil: *Evil, playerTransform: *Transform, dungeon: *const Dungeon, playerHealth: *Health) void {
-    for (evil.enemies.items) |*x| {
-        for (evil.enemies.items) |*y| {
-            _ = dynamicCollide(x, y);
-        }
-        if (dynamicCollide(x, playerTransform)) {
-            playerHealth[0] = if (playerHealth[0] < config.enemy.damage) 0 else playerHealth[0] - config.enemy.damage;
-        }
-    }
-    for (evil.enemies.items) |*x| {
-        staticCollide(dungeon, x);
-    }
-    staticCollide(dungeon, playerTransform);
-}
-
-const Evil = struct {
-    enemies: std.ArrayList(Enemy),
-    cells: std.AutoHashMap(Position, Cell),
-    rng: std.rand.DefaultPrng,
-    allocator: std.mem.Allocator,
-    fn init(allocator: std.mem.Allocator, cells: std.AutoHashMap(Position, Cell)) Evil {
-        return .{
-            .allocator = allocator,
-            .enemies = std.ArrayList(Enemy).init(allocator),
-            .rng = std.rand.DefaultPrng.init(0),
-            .cells = cells,
-        };
-    }
-    fn draw(self: *const Evil) void {
-        for (self.enemies.items) |e| {
-            e.draw();
-        }
-    }
-    fn update(self: *Evil, target: rl.Vector2) !void {
-        var hints = std.AutoHashMap(Position, Position).init(self.allocator);
-        var q = std.DoublyLinkedList(struct { from: Position, to: Position }){};
-        var nodes: [10000]@TypeOf(q).Node = undefined;
-        var ind: u32 = 0;
-        var pos = Position.fromVec2(target);
-        nodes[ind] = .{ .data = .{ .from = pos, .to = pos } };
-        q.prepend(&nodes[ind]);
-        ind += 1;
-        while (q.pop()) |hint| {
-            pos = hint.data.to;
-            if (self.cells.get(pos)) |x|
-                if (x == Cell.Wall) continue;
-            if (hints.contains(pos)) continue;
-            try hints.put(pos, hint.data.from);
-            const dxs = [_]i8{ 1, 1, 0, -1, -1, -1, 0, 1 };
-            const dys = [_]i8{ 0, 1, 1, 1, 0, -1, -1, -1 };
-            for (dxs, dys) |dx, dy| {
-                const to = .{ .x = pos.x + dx, .y = pos.y + dy };
-                nodes[ind] = .{ .data = .{ .from = pos, .to = to } };
-                q.prepend(&nodes[ind]);
-                ind += 1;
-            }
-        }
-        for (self.enemies.items) |*e| {
-            e.update(hints.get(Position.fromVec2(e.position)).?.toVec2());
-        }
-    }
-    fn add(self: *Evil, enemy: Enemy) !void {
-        try self.enemies.append(enemy);
-    }
-};
-const Enemy = struct {
-    position: rl.Vector2,
-    health: u32,
-    fn init(position: rl.Vector2) Enemy {
-        return .{ .position = position, .health = config.enemy.health };
-    }
-    fn draw(self: *const Enemy) void {
-        const start = rl.Vector3.init(self.position.x, config.character.radius, self.position.y);
-        const end = rl.Vector3.init(self.position.x, config.character.height - config.character.radius, self.position.y);
-        rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
-            @as(f32, @floatFromInt(self.health)) / @as(f32, config.enemy.health),
-            0,
-            0.2,
-            1,
-        )));
-    }
-    fn update(self: *Enemy, target: rl.Vector2) void {
-        self.position = target
-            .subtract(self.position)
-            .normalize().scale(config.character.speed * config.enemy.speedFactor)
-            .add(self.position);
-    }
-    fn projectX(self: *const Wall) coll.Segment {
-        return .{ .min = self.position.x - config.character.radius, .max = self.position.x + config.character.radius };
-    }
-    fn projectY(self: *const Wall) coll.Segment {
-        return .{ .min = self.position.y - config.character.radius, .max = self.position.y + config.character.radius };
-    }
-};
-
 const Wall = struct {
     position: rl.Vector2,
     size: rl.Vector3,
@@ -264,16 +169,16 @@ fn mapToCells(allocator: std.mem.Allocator) !std.AutoHashMap(Position, Cell) {
 
 const Dungeon = struct {
     walls: std.ArrayList(Wall),
-    spawners: std.ArrayList(Spawner(Enemy)),
+    spawners: std.ArrayList(Spawner(Enemy3)),
     rng: std.rand.DefaultPrng,
     fn init(allocator: std.mem.Allocator, cells: std.AutoHashMap(Position, Cell)) !Dungeon {
         var walls = std.ArrayList(Wall).init(allocator);
-        var spawners = std.ArrayList(Spawner(Enemy)).init(allocator);
+        var spawners = std.ArrayList(Spawner(Enemy3)).init(allocator);
         var it = cells.iterator();
         while (it.next()) |cell| {
             switch (cell.value_ptr.*) {
                 Cell.Wall => try walls.append(Wall.init(cell.key_ptr.toVec2())),
-                Cell.Spawner => try spawners.append(Spawner(Enemy).init(cell.key_ptr.toVec2())),
+                Cell.Spawner => try spawners.append(Spawner(Enemy3).init(cell.key_ptr.toVec2())),
                 Cell.Player => {},
             }
         }
@@ -304,14 +209,22 @@ const Player = .{ Transform, Camera, Health, Score, NewGun };
 const Bullet = .{ Transform, DeathTime, Direction };
 const Enemy2 = .{ Transform, Health, EnemyTag };
 const Wall2 = .{ Transform, WallTag };
+const Enemy3 = struct {
+    transform: Transform,
+    health: Health,
+    tag: EnemyTag,
+    fn init(position: rl.Vector2) @This() {
+        return .{ .transform = .{ .position = position }, .health = .{100}, .tag = EnemyTag{} };
+    }
+};
 
 // different max_entities for different entities
 pub const World = struct {
     const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy2, Wall2 });
     allocator: std.mem.Allocator,
-    evil: Evil,
     dungeon: Dungeon,
     ecs: Ecs,
+    cells: std.AutoHashMap(Position, Cell),
     pub fn init(allocator: std.mem.Allocator) !World {
         const cells = try mapToCells(allocator);
         var ecs = try Ecs.init(allocator, 1000);
@@ -339,9 +252,9 @@ pub const World = struct {
         }
         return .{
             .allocator = allocator,
-            .evil = Evil.init(allocator, cells),
             .dungeon = try Dungeon.init(allocator, cells),
             .ecs = ecs,
+            .cells = cells,
         };
     }
     pub fn getPlayerStats(self: *World) struct { health: f32, score: u32 } {
@@ -354,7 +267,7 @@ pub const World = struct {
         const movement = Controller.getInput();
         for (self.dungeon.spawners.items) |*spawner| {
             if (spawner.spawn()) |enemy| {
-                try self.evil.add(enemy);
+                self.ecs.add(enemy);
             }
         }
         var playerQ = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: *NewGun });
@@ -364,7 +277,40 @@ pub const World = struct {
         const pos3d = rl.Vector3.init(player.position.position.x, 0, player.position.position.y);
         player.camera[0].position = pos3d.add(config.player.cameraDelta);
         player.camera[0].target = pos3d;
-        try self.evil.update(player.position.position);
+        {
+            var hints = std.AutoHashMap(Position, Position).init(self.allocator);
+            var q = std.DoublyLinkedList(struct { from: Position, to: Position }){};
+            var nodes: [10000]@TypeOf(q).Node = undefined;
+            var ind: u32 = 0;
+            var pos = Position.fromVec2(player.position.position);
+            nodes[ind] = .{ .data = .{ .from = pos, .to = pos } };
+            q.prepend(&nodes[ind]);
+            ind += 1;
+            while (q.pop()) |hint| {
+                pos = hint.data.to;
+                if (self.cells.get(pos)) |x|
+                    if (x == Cell.Wall) continue;
+                if (hints.contains(pos)) continue;
+                try hints.put(pos, hint.data.from);
+                const dxs = [_]i8{ 1, 1, 0, -1, -1, -1, 0, 1 };
+                const dys = [_]i8{ 0, 1, 1, 1, 0, -1, -1, -1 };
+                for (dxs, dys) |dx, dy| {
+                    const to = .{ .x = pos.x + dx, .y = pos.y + dy };
+                    nodes[ind] = .{ .data = .{ .from = pos, .to = to } };
+                    q.prepend(&nodes[ind]);
+                    ind += 1;
+                }
+            }
+            var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
+            var enemyIt = enemyQ.iterator();
+            while (enemyIt.next()) |enemy| {
+                const target = hints.get(Position.fromVec2(enemy.transform.position)).?.toVec2();
+                enemy.transform.position = target
+                    .subtract(enemy.transform.position)
+                    .normalize().scale(config.character.speed * config.enemy.speedFactor)
+                    .add(enemy.transform.position);
+            }
+        }
 
         if (movement.shoot) {
             const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
@@ -378,35 +324,47 @@ pub const World = struct {
             }
         }
         {
-            var bq = self.ecs.query(struct { transform: Transform, deathTime: DeathTime });
-            var bIt = bq.iterator();
-            while (bIt.next()) |bullet| {
-                // var eQ = self.ecs.query(struct { transform: Transform, health: *Health, tag: EnemyTag });
-                // var eIt = eQ.iterator();
-                // while (eIt.next()) |enemy| {
-
-                for (self.evil.enemies.items, 0..) |*enemy, enemyI| {
+            var bulletQ = self.ecs.query(struct { transform: Transform, deathTime: DeathTime });
+            var bulletIt = bulletQ.iterator();
+            while (bulletIt.next()) |bullet| {
+                var enemyQ = self.ecs.query(struct { transform: Transform, health: *Health, tag: EnemyTag });
+                var enemyIt = enemyQ.iterator();
+                while (enemyIt.next()) |enemy| {
                     const dir = circlesCollisionDirection(
                         .{ .center = bullet.transform.position, .radius = 0.1 },
-                        .{ .center = enemy.position, .radius = config.character.radius },
+                        .{ .center = enemy.transform.position, .radius = config.character.radius },
                     );
 
                     if (dir.lengthSqr() > 0) {
-                        if (enemy.health < config.bullet.damage) {
-                            // eIt.destroy(&self.ecs);
-                            _ = self.evil.enemies.swapRemove(enemyI);
+                        if (enemy.health[0] < config.bullet.damage) {
+                            enemyIt.destroy(&self.ecs);
                             player.score[0] += config.player.reward;
-                        } else enemy.health -= config.bullet.damage;
-                        bIt.destroy(&self.ecs);
+                        } else enemy.health[0] -= config.bullet.damage;
+                        bulletIt.destroy(&self.ecs);
                     }
                 }
             }
         }
-        checkCharacterCollision(&self.evil, player.position, &self.dungeon, player.health);
+        {
+            var enemyQ = self.ecs.query(struct { transform: *Transform, health: Health, tag: EnemyTag });
+            var enemyIt = enemyQ.iterator();
+            while (enemyIt.next()) |x| {
+                var enemyIt2 = enemyQ.iterator();
+                while (enemyIt2.next()) |y| {
+                    _ = dynamicCollide(x.transform, y.transform);
+                }
+                if (dynamicCollide(x.transform, player.position)) {
+                    player.health[0] = if (player.health[0] < config.enemy.damage) 0 else player.health[0] - config.enemy.damage;
+                }
+                staticCollide(&self.dungeon, x.transform);
+            }
+            staticCollide(&self.dungeon, player.position);
+        }
         {
             var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
             var bIt = bq.iterator();
             while (bIt.next()) |bullet| {
+                // TODO has bug somehow destroying more than needed
                 if (bullet.deathTime[0] < rl.getTime()) bIt.destroy(&self.ecs);
             }
             bIt = bq.iterator();
@@ -443,7 +401,20 @@ pub const World = struct {
                 rl.drawSphere(pos, 0.1, rl.Color.white);
             }
         }
-        self.evil.draw();
+        {
+            var enemyQ = self.ecs.query(struct { transform: Transform, health: Health, tag: EnemyTag });
+            var enemyIt = enemyQ.iterator();
+            while (enemyIt.next()) |enemy| {
+                const start = rl.Vector3.init(enemy.transform.position.x, config.character.radius, enemy.transform.position.y);
+                const end = rl.Vector3.init(enemy.transform.position.x, config.character.height - config.character.radius, enemy.transform.position.y);
+                rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
+                    @as(f32, @floatFromInt(enemy.health[0])) / @as(f32, config.enemy.health),
+                    0,
+                    0.2,
+                    1,
+                )));
+            }
+        }
         self.dungeon.draw();
     }
 };

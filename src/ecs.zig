@@ -103,7 +103,8 @@ fn Query(bundles: []const []const type, S: type) type {
         indices: []ArrayStruct(S),
         pub fn destroy(self: *@This(), ecs: *EcsInternal(bundles)) void {
             if (self.bundleIndex >= bundlesFiltered.len) return;
-            if (self.nextIndex >= self.indices[self.bundleIndex].len) return;
+            if (self.nextIndex > self.indices[self.bundleIndex].len) return;
+            self.indices[self.bundleIndex].len -= 1;
             self.nextIndex -= 1;
             removes[self.bundleIndex](ecs, self.nextIndex);
         }
