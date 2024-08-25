@@ -47,9 +47,9 @@ const State = struct {
     fn gameLoop(world: *game.World) !Internal {
         try world.update();
         world.draw();
-        var health: f32 = @floatFromInt(world.player.health);
-        _ = rg.guiProgressBar(rl.Rectangle.init(halfX() - 100 / 2, halfY() - 120, 100, 20), "", "", &health, 0, game.config.player.health);
-        return if (health == 0) .{ .finished = world.player.score } else .{ .running = world.* };
+        var stats = world.getPlayerStats();
+        _ = rg.guiProgressBar(rl.Rectangle.init(halfX() - 100 / 2, halfY() - 120, 100, 20), "", "", &stats.health, 0, game.config.player.health);
+        return if (stats.health == 0) .{ .finished = stats.score } else .{ .running = world.* };
     }
 };
 
