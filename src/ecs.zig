@@ -97,50 +97,75 @@ fn Query(bundles: []const []const type, S: type) type {
             }.remove;
         break :removes sol;
     };
+    const QueryIndex = union(enum) {
+        const Index = struct { bundle: usize, element: usize };
+        normal: Index,
+        hold: Index,
+        start,
+        end,
+        fn normal(bundle: usize, element: usize) @This() {
+            return .{ .normal = .{ .bundle = bundle, .element = element } };
+        }
+        fn get(self: @This()) ?Index {
+            return switch (self) {
+                .normal => |x| x,
+                else => null,
+            };
+        }
+        fn normaliseIndex(bundle: usize, element: usize, indices: []ArrayStruct(S)) @This() {
+            if (bundle >= bundlesFiltered.len) return .end;
+            if (element < indices[bundle].len) return normal(bundle, element);
+            var i = bundle + 1;
+            return while (i < bundlesFiltered.len) : (i += 1) {
+                if (indices[i].len != 0) break normal(i, 0);
+            } else .end;
+        }
+        fn next(self: @This(), indices: []ArrayStruct(S)) @This() {
+            return switch (self) {
+                .normal => |index| normaliseIndex(index.bundle, index.element + 1, indices),
+                .hold => |index| normaliseIndex(index.bundle, index.element, indices),
+                .start => normaliseIndex(0, 0, indices),
+                .end => std.debug.panic("Already at end", .{}),
+            };
+        }
+    };
     const QueryIterator = struct {
-        bundleIndex: usize,
-        nextIndex: usize,
+        index: QueryIndex,
         indices: []ArrayStruct(S),
         pub fn destroy(self: *@This(), ecs: *EcsInternal(bundles)) void {
-            if (self.bundleIndex >= bundlesFiltered.len) return;
-            if (self.nextIndex > self.indices[self.bundleIndex].len) return;
-            self.indices[self.bundleIndex].len -= 1;
-            self.nextIndex -= 1;
-            removes[self.bundleIndex](ecs, self.nextIndex);
+            if (self.index.get()) |index| {
+                removes[index.bundle](ecs, index.element);
+                self.indices[index.bundle].len -= 1;
+                self.index = .{ .hold = index };
+            }
         }
         pub fn next(self: *@This()) ?S {
-            if (self.bundleIndex >= bundlesFiltered.len) return null;
-            if (self.nextIndex >= self.indices[self.bundleIndex].len) {
-                self.bundleIndex += 1;
-                self.nextIndex = 0;
-                return self.next();
-            }
-            var s: S = undefined;
-            inline for (std.meta.fields(S)) |field| {
-                const cur = &@field(self.indices[self.bundleIndex], field.name)[self.nextIndex];
-                @field(s, field.name) = if (field.type == dePointer(field.type)) cur.* else cur;
-            }
-            self.nextIndex += 1;
-            return s;
+            self.index = self.index.next(self.indices);
+            if (self.index.get()) |index| {
+                var s: S = undefined;
+                inline for (std.meta.fields(S)) |field| {
+                    const cur = &@field(self.indices[index.bundle], field.name)[index.element];
+                    @field(s, field.name) = if (field.type == dePointer(field.type)) cur.* else cur;
+                }
+                return s;
+            } else return null;
         }
     };
     return struct {
         indices: [bundlesFiltered.len]ArrayStruct(S),
         fn init(ecs: *EcsInternal(bundles)) @This() {
             var indices: [bundlesFiltered.len]ArrayStruct(S) = undefined;
-            comptime var i = 0;
-            inline for (bundlesFiltered) |components| {
+            inline for (bundlesFiltered, 0..) |components, i| {
                 const slice = ecs.getBundle(components).data.slice();
                 indices[i].len = slice.len;
                 inline for (dePointerFields(std.meta.fields(S))) |field|
                     @field(indices[i], field.name) =
                         slice.items(Bundle(components).getFieldTag(field.type));
-                i += 1;
             }
             return .{ .indices = indices };
         }
         pub fn iterator(self: *@This()) QueryIterator {
-            return .{ .bundleIndex = 0, .nextIndex = 0, .indices = &self.indices };
+            return .{ .index = .start, .indices = &self.indices };
         }
     };
 }
@@ -396,6 +421,44 @@ test "ecs6" {
         var it = q.iterator();
         try std.testing.expectEqual(.{Name{ .name = "Joe" }}, it.next().?);
         try std.testing.expectEqual(.{Name{ .name = "Pavle" }}, it.next().?);
+        try std.testing.expectEqual(null, it.next());
+    }
+}
+test "ecs7" {
+    var s = try Ecs(.{ Player, Enemy }).init(std.heap.page_allocator, 1000);
+    defer s.deinit();
+    s.add(.{ Health{100}, Damage{3} });
+    s.add(.{ Health{100}, Name{ .name = "Joe" } });
+    s.add(.{ Health{200}, Name{ .name = "Petar" } });
+    s.add(.{ Health{200}, Name{ .name = "Pavle" } });
+    s.add(.{ Health{200}, Name{ .name = "Julija" } });
+    s.add(.{ Health{200}, Name{ .name = "Petra" } });
+    s.add(.{ Health{300}, Damage{3} });
+    s.add(.{ Health{300}, Damage{16} });
+    {
+        var q = s.query(struct { health: Health });
+        var it = q.iterator();
+        while (it.next()) |_| it.destroy(&s);
+    }
+    {
+        var q = s.query(struct {});
+        var it = q.iterator();
+        try std.testing.expectEqual(null, it.next());
+    }
+}
+test "ecs8" {
+    var s = try Ecs(.{ Player, Enemy }).init(std.heap.page_allocator, 1000);
+    defer s.deinit();
+    s.add(.{ Health{100}, Name{ .name = "Joe" } });
+    s.add(.{ Health{102}, Damage{3} });
+    {
+        var q = s.query(struct { health: Health });
+        var it = q.iterator();
+        while (it.next()) |h| if (h.health[0] > 100) it.destroy(&s);
+    }
+    {
+        var q = s.query(struct { Health, Damage });
+        var it = q.iterator();
         try std.testing.expectEqual(null, it.next());
     }
 }

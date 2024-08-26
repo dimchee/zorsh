@@ -214,7 +214,7 @@ const Enemy3 = struct {
     health: Health,
     tag: EnemyTag,
     fn init(position: rl.Vector2) @This() {
-        return .{ .transform = .{ .position = position }, .health = .{100}, .tag = EnemyTag{} };
+        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{} };
     }
 };
 
@@ -301,10 +301,14 @@ pub const World = struct {
                     ind += 1;
                 }
             }
-            var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
+            // var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
+            var enemyQ = self.ecs.query(struct { transform: *Transform, health: Health, tag: EnemyTag });
             var enemyIt = enemyQ.iterator();
+            std.log.debug("enemyUpdate: ", .{});
             while (enemyIt.next()) |enemy| {
                 const target = hints.get(Position.fromVec2(enemy.transform.position)).?.toVec2();
+                std.log.debug("    enemy  {}", .{enemy});
+                std.log.debug("    target {}", .{target});
                 enemy.transform.position = target
                     .subtract(enemy.transform.position)
                     .normalize().scale(config.character.speed * config.enemy.speedFactor)
