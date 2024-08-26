@@ -301,8 +301,7 @@ pub const World = struct {
                     ind += 1;
                 }
             }
-            // var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
-            var enemyQ = self.ecs.query(struct { transform: *Transform, health: Health, tag: EnemyTag });
+            var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
             var enemyIt = enemyQ.iterator();
             std.log.debug("enemyUpdate: ", .{});
             while (enemyIt.next()) |enemy| {

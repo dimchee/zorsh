@@ -19,6 +19,12 @@ fn nub(comptime T: type, args: []const T) []T {
             std.mem.swap(T, &sol[i], &sol[len - 1]);
     return sol[0..len];
 }
+fn subset(bundle: []const type, components: []const type) bool {
+    for (components) |component|
+        if (std.mem.indexOfScalar(type, bundle, component) == null)
+            return false;
+    return true;
+}
 fn toArray(T: type, comptime args: anytype) [args.len]T {
     var sol: [args.len]T = undefined;
     inline for (args, 0..) |arg, i|
@@ -81,7 +87,7 @@ fn Query(bundles: []const []const type, S: type) type {
         var sol: [bundles.len][]const type = undefined;
         var len = 0;
         const thisComponents = EcsInternal(bundles).getComponents(&dePointerFields(std.meta.fields(S)));
-        for (bundles) |bundle| if (indexOf(type, bundle, &thisComponents)) |_| {
+        for (bundles) |bundle| if (subset(bundle, &thisComponents)) {
             sol[len] = &toArray(type, bundle);
             len += 1;
         };
