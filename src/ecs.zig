@@ -138,6 +138,24 @@ fn Query(bundles: []const []const type, S: type) type {
     const QueryIterator = struct {
         index: QueryIndex,
         indices: []ArrayStruct(S),
+        pub fn refine(self: *@This(), T: type, ecs: *EcsInternal(bundles)) ?T {
+            const components = EcsInternal(bundles).getComponents(&dePointerFields(std.meta.fields(T)));
+            if (self.index.get()) |index| {
+                inline for (bundlesFiltered) |bundle| {
+                    if (comptime subset(bundle, &components)) {
+                        std.log.debug("index: {}", .{index});
+                        const slice = ecs.getBundle(bundle).data.slice();
+                        var sol: T = undefined;
+                        inline for (std.meta.fields(T)) |field| {
+                            const cur = &slice.items(Bundle(bundle).getFieldTag(dePointer(field.type)))[index.element];
+                            @field(sol, field.name) = if (field.type == dePointer(field.type)) cur.* else cur;
+                        }
+                        return sol;
+                    }
+                }
+            }
+            return null;
+        }
         pub fn destroy(self: *@This(), ecs: *EcsInternal(bundles)) void {
             if (self.index.get()) |index| {
                 removes[index.bundle](ecs, index.element);

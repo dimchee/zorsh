@@ -30,8 +30,6 @@ pub const config = .{
     \\ [][][][][][][][][][][][][][][][][][][][][][][][][][]
     ,
 };
-// const Rectangle = struct { center: rl.Vector2, size: rl.Vector2 };
-
 const Controller = struct {
     shoot: bool,
     direction: rl.Vector2,
@@ -202,25 +200,27 @@ const Direction = struct { rl.Vector2 };
 const Camera = struct { rl.Camera3D };
 const NewGun = struct { lastFired: f64 };
 const DeathTime = struct { f64 };
+const DynamicCollider = struct {};
 const WallTag = struct {};
 const EnemyTag = struct {};
 
-const Player = .{ Transform, Camera, Health, Score, NewGun };
+const Player = .{ Transform, Camera, Health, Score, NewGun, DynamicCollider };
 const Bullet = .{ Transform, DeathTime, Direction };
-const Enemy2 = .{ Transform, Health, EnemyTag };
+const Enemy = .{ Transform, Health, EnemyTag, DynamicCollider };
 const Wall2 = .{ Transform, WallTag };
 const Enemy3 = struct {
     transform: Transform,
     health: Health,
     tag: EnemyTag,
+    collider: DynamicCollider,
     fn init(position: rl.Vector2) @This() {
-        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{} };
+        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{}, .collider = DynamicCollider{} };
     }
 };
 
 // different max_entities for different entities
 pub const World = struct {
-    const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy2, Wall2 });
+    const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy, Wall2 });
     allocator: std.mem.Allocator,
     dungeon: Dungeon,
     ecs: Ecs,
@@ -248,6 +248,7 @@ pub const World = struct {
                     },
                 },
                 NewGun{ .lastFired = 0 },
+                DynamicCollider{},
             });
         }
         return .{
@@ -303,11 +304,11 @@ pub const World = struct {
             }
             var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
             var enemyIt = enemyQ.iterator();
-            std.log.debug("enemyUpdate: ", .{});
+            // std.log.debug("enemyUpdate: ", .{});
             while (enemyIt.next()) |enemy| {
                 const target = hints.get(Position.fromVec2(enemy.transform.position)).?.toVec2();
-                std.log.debug("    enemy  {}", .{enemy});
-                std.log.debug("    target {}", .{target});
+                // std.log.debug("    enemy  {}", .{enemy});
+                // std.log.debug("    target {}", .{target});
                 enemy.transform.position = target
                     .subtract(enemy.transform.position)
                     .normalize().scale(config.character.speed * config.enemy.speedFactor)
@@ -349,25 +350,26 @@ pub const World = struct {
             }
         }
         {
-            var enemyQ = self.ecs.query(struct { transform: *Transform, health: Health, tag: EnemyTag });
-            var enemyIt = enemyQ.iterator();
-            while (enemyIt.next()) |x| {
-                var enemyIt2 = enemyQ.iterator();
-                while (enemyIt2.next()) |y| {
-                    _ = dynamicCollide(x.transform, y.transform);
-                }
-                if (dynamicCollide(x.transform, player.position)) {
-                    player.health[0] = if (player.health[0] < config.enemy.damage) 0 else player.health[0] - config.enemy.damage;
+            // TODO deeper query (query on query) returns ?S' when looking for S'
+            var dynamicQ = self.ecs.query(struct { transform: *Transform, dummy: DynamicCollider });
+            var dynamicIt1 = dynamicQ.iterator();
+            while (dynamicIt1.next()) |x| {
+                var dynamicIt2 = dynamicQ.iterator();
+                while (dynamicIt2.next()) |y| {
+                    if (dynamicCollide(x.transform, y.transform)) {
+                        // TODO chrashes
+                        if (dynamicIt1.refine(struct { health: *Health }, &self.ecs)) |p| {
+                            p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
+                        }
+                    }
                 }
                 staticCollide(&self.dungeon, x.transform);
             }
-            staticCollide(&self.dungeon, player.position);
         }
         {
             var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
             var bIt = bq.iterator();
             while (bIt.next()) |bullet| {
-                // TODO has bug somehow destroying more than needed
                 if (bullet.deathTime[0] < rl.getTime()) bIt.destroy(&self.ecs);
             }
             bIt = bq.iterator();
