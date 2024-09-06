@@ -7,7 +7,7 @@ const ecslib = @import("ecs.zig");
 pub const config = .{
     .wall = .{ .height = 2, .size = 1 },
     .character = .{ .radius = 0.5, .height = 2, .speed = 0.1 },
-    .bullet = .{ .speed = 0.2, .damage = 10, .rate = 10.0, .lifetime = 2 },
+    .bullet = .{ .radius = 0.1, .speed = 0.2, .damage = 10, .rate = 10.0, .lifetime = 2 },
     .player = .{ .health = 100, .reward = 1, .cameraDelta = rl.Vector3.init(0, 10, 4) },
     .enemy = .{ .speedFactor = 0.6, .spawnRate = 0.5, .health = 50, .damage = 2 },
     .map =
@@ -61,17 +61,16 @@ const Controller = struct {
     }
 };
 
-fn dynamicCollide(x: anytype, y: anytype) bool {
+const Collider = struct { transform: *Transform, collider: DynamicCollider };
+fn dynamicCollide(x: Collider, y: Collider) bool {
     const dir = circlesCollisionDirection(
-        .{ .center = x.position, .radius = config.character.radius },
-        .{ .center = y.position, .radius = config.character.radius },
+        .{ .center = x.transform.position, .radius = x.collider.radius },
+        .{ .center = y.transform.position, .radius = y.collider.radius },
     );
     if (dir.lengthSqr() > 0) {
-        // if (std.mem.eql(u8, @typeName(@TypeOf(y)), "*game.Player")) {
-        //     std.debug.print("Collided player health: {}\n", .{y.health});
-        // }
-        x.position = x.position.add(dir.scale(0.5));
-        y.position = y.position.subtract(dir.scale(0.5));
+        //TODO remove
+        x.transform.position = x.transform.position.add(dir.scale(0.5));
+        y.transform.position = y.transform.position.subtract(dir.scale(0.5));
         return true;
     }
     return false;
@@ -193,6 +192,34 @@ const Dungeon = struct {
     }
 };
 
+fn hints(allocator: std.mem.Allocator, target: rl.Vector2, cells: std.AutoHashMap(Position, Cell)) !std.AutoHashMap(Position, Position) {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    var sol = std.AutoHashMap(Position, Position).init(arena.allocator());
+    var q = std.DoublyLinkedList(struct { from: Position, to: Position }){};
+    var nodes: [10000]@TypeOf(q).Node = undefined;
+    var ind: u32 = 0;
+    var pos = Position.fromVec2(target);
+    nodes[ind] = .{ .data = .{ .from = pos, .to = pos } };
+    q.prepend(&nodes[ind]);
+    ind += 1;
+    while (q.pop()) |hint| {
+        pos = hint.data.to;
+        if (cells.get(pos)) |x|
+            if (x == Cell.Wall) continue;
+        if (sol.contains(pos)) continue;
+        try sol.put(pos, hint.data.from);
+        const dxs = [_]i8{ 1, 1, 0, -1, -1, -1, 0, 1 };
+        const dys = [_]i8{ 0, 1, 1, 1, 0, -1, -1, -1 };
+        for (dxs, dys) |dx, dy| {
+            const to = .{ .x = pos.x + dx, .y = pos.y + dy };
+            nodes[ind] = .{ .data = .{ .from = pos, .to = to } };
+            q.prepend(&nodes[ind]);
+            ind += 1;
+        }
+    }
+    return sol;
+}
+
 const Health = struct { u32 };
 const Score = struct { u32 };
 const Transform = struct { position: rl.Vector2 };
@@ -200,12 +227,14 @@ const Direction = struct { rl.Vector2 };
 const Camera = struct { rl.Camera3D };
 const NewGun = struct { lastFired: f64 };
 const DeathTime = struct { f64 };
-const DynamicCollider = struct {};
+const DynamicCollider = struct { radius: f32 };
 const WallTag = struct {};
 const EnemyTag = struct {};
+const BulletTag = struct {};
+const PlayerTag = struct {};
 
-const Player = .{ Transform, Camera, Health, Score, NewGun, DynamicCollider };
-const Bullet = .{ Transform, DeathTime, Direction };
+const Player = .{ Transform, Camera, Health, Score, NewGun, DynamicCollider, PlayerTag };
+const Bullet = .{ Transform, DeathTime, Direction, DynamicCollider, BulletTag };
 const Enemy = .{ Transform, Health, EnemyTag, DynamicCollider };
 const Wall2 = .{ Transform, WallTag };
 const Enemy3 = struct {
@@ -214,7 +243,7 @@ const Enemy3 = struct {
     tag: EnemyTag,
     collider: DynamicCollider,
     fn init(position: rl.Vector2) @This() {
-        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{}, .collider = DynamicCollider{} };
+        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{}, .collider = DynamicCollider{ .radius = config.character.radius } };
     }
 };
 
@@ -234,22 +263,15 @@ pub const World = struct {
                 if (cell.value_ptr.* == Cell.Player)
                     break cell.key_ptr.toVec2();
             } else rl.Vector2.init(0, 0);
-            ecs.add(.{
-                Health{config.player.health},
-                Score{0},
-                Transform{ .position = pos },
-                Camera{
-                    rl.Camera3D{
-                        .position = config.player.cameraDelta,
-                        .target = rl.Vector3.zero(),
-                        .up = rl.Vector3.init(0, 1, 0),
-                        .fovy = 60,
-                        .projection = rl.CameraProjection.camera_perspective,
-                    },
+            ecs.add(.{ Health{config.player.health}, Score{0}, Transform{ .position = pos }, Camera{
+                rl.Camera3D{
+                    .position = config.player.cameraDelta,
+                    .target = rl.Vector3.zero(),
+                    .up = rl.Vector3.init(0, 1, 0),
+                    .fovy = 60,
+                    .projection = rl.CameraProjection.camera_perspective,
                 },
-                NewGun{ .lastFired = 0 },
-                DynamicCollider{},
-            });
+            }, NewGun{ .lastFired = 0 }, DynamicCollider{ .radius = config.character.radius }, PlayerTag{} });
         }
         return .{
             .allocator = allocator,
@@ -271,45 +293,19 @@ pub const World = struct {
                 self.ecs.add(enemy);
             }
         }
-        var playerQ = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: *NewGun });
+        var playerQ = self.ecs.query(struct { health: *Health, score: *Score, transform: *Transform, camera: *Camera, gun: *NewGun });
         var playerIt = playerQ.iterator();
         var player = playerIt.next().?;
-        player.position.position = player.position.position.add(movement.delta);
-        const pos3d = rl.Vector3.init(player.position.position.x, 0, player.position.position.y);
+        player.transform.position = player.transform.position.add(movement.delta);
+        const pos3d = rl.Vector3.init(player.transform.position.x, 0, player.transform.position.y);
         player.camera[0].position = pos3d.add(config.player.cameraDelta);
         player.camera[0].target = pos3d;
         {
-            var hints = std.AutoHashMap(Position, Position).init(self.allocator);
-            var q = std.DoublyLinkedList(struct { from: Position, to: Position }){};
-            var nodes: [10000]@TypeOf(q).Node = undefined;
-            var ind: u32 = 0;
-            var pos = Position.fromVec2(player.position.position);
-            nodes[ind] = .{ .data = .{ .from = pos, .to = pos } };
-            q.prepend(&nodes[ind]);
-            ind += 1;
-            while (q.pop()) |hint| {
-                pos = hint.data.to;
-                if (self.cells.get(pos)) |x|
-                    if (x == Cell.Wall) continue;
-                if (hints.contains(pos)) continue;
-                try hints.put(pos, hint.data.from);
-                const dxs = [_]i8{ 1, 1, 0, -1, -1, -1, 0, 1 };
-                const dys = [_]i8{ 0, 1, 1, 1, 0, -1, -1, -1 };
-                for (dxs, dys) |dx, dy| {
-                    const to = .{ .x = pos.x + dx, .y = pos.y + dy };
-                    nodes[ind] = .{ .data = .{ .from = pos, .to = to } };
-                    q.prepend(&nodes[ind]);
-                    ind += 1;
-                }
-            }
             var enemyQ = self.ecs.query(struct { transform: *Transform, tag: EnemyTag });
             var enemyIt = enemyQ.iterator();
-            // std.log.debug("enemyUpdate: ", .{});
             while (enemyIt.next()) |enemy| {
-                const target = hints.get(Position.fromVec2(enemy.transform.position)).?.toVec2();
-                // std.log.debug("    enemy  {}", .{enemy});
-                // std.log.debug("    target {}", .{target});
-                enemy.transform.position = target
+                enemy.transform.position = (try hints(self.allocator, player.transform.position, self.cells))
+                    .get(Position.fromVec2(enemy.transform.position)).?.toVec2()
                     .subtract(enemy.transform.position)
                     .normalize().scale(config.character.speed * config.enemy.speedFactor)
                     .add(enemy.transform.position);
@@ -320,46 +316,32 @@ pub const World = struct {
             const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
             if (isReadyToFire) {
                 self.ecs.add(.{
-                    Transform{ .position = player.position.position },
+                    Transform{ .position = movement.direction.normalize()
+                        .scale(config.character.radius + config.bullet.radius * 1.05)
+                        .add(player.transform.position) },
                     DeathTime{rl.getTime() + config.bullet.lifetime},
                     Direction{movement.direction},
+                    DynamicCollider{ .radius = config.bullet.radius },
+                    BulletTag{},
                 });
                 player.gun.lastFired = rl.getTime();
             }
         }
         {
-            var bulletQ = self.ecs.query(struct { transform: Transform, deathTime: DeathTime });
-            var bulletIt = bulletQ.iterator();
-            while (bulletIt.next()) |bullet| {
-                var enemyQ = self.ecs.query(struct { transform: Transform, health: *Health, tag: EnemyTag });
-                var enemyIt = enemyQ.iterator();
-                while (enemyIt.next()) |enemy| {
-                    const dir = circlesCollisionDirection(
-                        .{ .center = bullet.transform.position, .radius = 0.1 },
-                        .{ .center = enemy.transform.position, .radius = config.character.radius },
-                    );
-
-                    if (dir.lengthSqr() > 0) {
-                        if (enemy.health[0] < config.bullet.damage) {
-                            enemyIt.destroy(&self.ecs);
-                            player.score[0] += config.player.reward;
-                        } else enemy.health[0] -= config.bullet.damage;
-                        bulletIt.destroy(&self.ecs);
-                    }
-                }
-            }
-        }
-        {
-            // TODO deeper query (query on query) returns ?S' when looking for S'
-            var dynamicQ = self.ecs.query(struct { transform: *Transform, dummy: DynamicCollider });
+            var dynamicQ = self.ecs.query(Collider);
             var dynamicIt1 = dynamicQ.iterator();
             while (dynamicIt1.next()) |x| {
                 var dynamicIt2 = dynamicQ.iterator();
                 while (dynamicIt2.next()) |y| {
-                    if (dynamicCollide(x.transform, y.transform)) {
-                        // TODO chrashes
-                        if (dynamicIt1.refine(struct { health: *Health }, &self.ecs)) |p| {
+                    if (dynamicCollide(x, y)) {
+                        if (dynamicIt1.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
                             p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
+                        }
+                        if (dynamicIt1.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
+                            if (dynamicIt2.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                                enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
+                                dynamicIt1.destroy(&self.ecs);
+                            }
                         }
                     }
                 }
@@ -370,16 +352,25 @@ pub const World = struct {
             var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
             var bIt = bq.iterator();
             while (bIt.next()) |bullet| {
-                if (bullet.deathTime[0] < rl.getTime()) bIt.destroy(&self.ecs);
-            }
-            bIt = bq.iterator();
-            while (bIt.next()) |bullet| {
                 bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
             }
         }
+        {
+            var q = self.ecs.query(struct { deathTime: DeathTime });
+            var it = q.iterator();
+            while (it.next()) |x| if (x.deathTime[0] < rl.getTime()) it.destroy(&self.ecs);
+        }
+        {
+            var q = self.ecs.query(struct { health: Health, tag: EnemyTag });
+            var it = q.iterator();
+            while (it.next()) |x| if (x.health[0] == 0) {
+                it.destroy(&self.ecs);
+                player.score[0] += config.player.reward;
+            };
+        }
     }
     pub fn draw(self: *World) void {
-        var playerQ = self.ecs.query(struct { health: *Health, score: *Score, position: *Transform, camera: *Camera, gun: *NewGun });
+        var playerQ = self.ecs.query(struct { camera: *Camera, transform: Transform, tag: PlayerTag });
         var playerIt = playerQ.iterator();
         var player = playerIt.next().?;
 
@@ -394,8 +385,8 @@ pub const World = struct {
             }
         }
         {
-            const start = rl.Vector3.init(player.position.position.x, config.character.radius, player.position.position.y);
-            const end = rl.Vector3.init(player.position.position.x, config.character.height - config.character.radius, player.position.position.y);
+            const start = rl.Vector3.init(player.transform.position.x, config.character.radius, player.transform.position.y);
+            const end = rl.Vector3.init(player.transform.position.x, config.character.height - config.character.radius, player.transform.position.y);
             rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.light_gray);
         }
         {
