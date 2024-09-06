@@ -139,15 +139,21 @@ fn Query(bundles: []const []const type, S: type) type {
         index: QueryIndex,
         indices: []ArrayStruct(S),
         pub fn refine(self: *@This(), T: type, ecs: *EcsInternal(bundles)) ?T {
-            const components = EcsInternal(bundles).getComponents(&dePointerFields(std.meta.fields(T)));
+            const mask = comptime mask: {
+                const components = EcsInternal(bundles).getComponents(&dePointerFields(std.meta.fields(T)));
+                var mask: [bundlesFiltered.len]bool = undefined;
+                for (bundlesFiltered, 0..) |bundle, i| {
+                    mask[i] = subset(bundle, &components);
+                }
+                break :mask mask;
+            };
             if (self.index.get()) |index| {
-                inline for (bundlesFiltered) |bundle| {
-                    if (comptime subset(bundle, &components)) {
-                        std.log.debug("index: {}", .{index});
-                        const slice = ecs.getBundle(bundle).data.slice();
+                inline for (bundlesFiltered, 0..) |components, i| {
+                    if (i == index.bundle and mask[i]) {
                         var sol: T = undefined;
+                        const slice = ecs.getBundle(components).data.slice();
                         inline for (std.meta.fields(T)) |field| {
-                            const cur = &slice.items(Bundle(bundle).getFieldTag(dePointer(field.type)))[index.element];
+                            const cur = &slice.items(Bundle(components).getFieldTag(dePointer(field.type)))[index.element];
                             @field(sol, field.name) = if (field.type == dePointer(field.type)) cur.* else cur;
                         }
                         return sol;
