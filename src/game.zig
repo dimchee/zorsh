@@ -69,39 +69,18 @@ fn dynamicCollide(x: Collider, y: Collider) ?rl.Vector2 {
     return if (scale > 0) dif.normalize().scale(scale) else null;
 }
 
-const Wall = struct {
-    position: rl.Vector2,
-    fn init(pos: rl.Vector2) Wall {
-        return .{ .position = pos };
-    }
-    fn draw(self: *const Wall) void {
-        const pos = rl.Vector3.init(self.position.x, 1, self.position.y);
-        const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
-        rl.drawCubeV(pos, size, rl.Color.dark_blue);
-    }
-    fn directionTo(self: *const Wall, x: Collider) ?rl.Vector2 {
-        const sgnX: f32 = if (x.transform.position.x - self.position.x > 0) 1 else -1;
-        const sgnY: f32 = if (x.transform.position.y - self.position.y > 0) 1 else -1;
-        const difX = config.wall.size / 2.0 + x.collider.radius - @abs(x.transform.position.x - self.position.x);
-        const difY = config.wall.size / 2.0 + x.collider.radius - @abs(x.transform.position.y - self.position.y);
-        if (difX > 0 and difY > 0) return if (difX < difY) rl.Vector2.init(sgnX * difX, 0) else rl.Vector2.init(0, sgnY * difY);
-        return null;
-    }
-};
-fn Spawner(what: type) type {
-    return struct {
-        position: rl.Vector2,
-        nextSpawn: f64,
-        fn init(position: rl.Vector2) Spawner(what) {
-            return .{ .position = position, .nextSpawn = 0.0 };
-        }
-        fn spawn(self: *Spawner(what)) ?what {
-            if (rl.getTime() < self.nextSpawn) return null;
-            self.nextSpawn = rl.getTime() + 1.0 / config.enemy.spawnRate;
-            return what.init(self.position);
-        }
-    };
+fn directionTo(wall: anytype, x: Collider) ?rl.Vector2 {
+    const sgnX: f32 = if (x.transform.position.x - wall.transform.position.x > 0) 1 else -1;
+    const sgnY: f32 = if (x.transform.position.y - wall.transform.position.y > 0) 1 else -1;
+    const difX = config.wall.size / 2.0 + x.collider.radius - @abs(x.transform.position.x - wall.transform.position.x);
+    const difY = config.wall.size / 2.0 + x.collider.radius - @abs(x.transform.position.y - wall.transform.position.y);
+    if (difX > 0 and difY > 0) return if (difX < difY) rl.Vector2.init(sgnX * difX, 0) else rl.Vector2.init(0, sgnY * difY);
+    return null;
 }
+const Spawner = struct {
+    position: rl.Vector2,
+    nextSpawn: f64,
+};
 
 const Cell = enum { Wall, Player, Spawner };
 const Position = struct {
@@ -136,34 +115,6 @@ fn mapToCells(allocator: std.mem.Allocator) !std.AutoHashMap(Position, Cell) {
     return cells;
 }
 
-const Dungeon = struct {
-    walls: std.ArrayList(Wall),
-    spawners: std.ArrayList(Spawner(Enemy3)),
-    rng: std.rand.DefaultPrng,
-    fn init(allocator: std.mem.Allocator, cells: std.AutoHashMap(Position, Cell)) !Dungeon {
-        var walls = std.ArrayList(Wall).init(allocator);
-        var spawners = std.ArrayList(Spawner(Enemy3)).init(allocator);
-        var it = cells.iterator();
-        while (it.next()) |cell| {
-            switch (cell.value_ptr.*) {
-                Cell.Wall => try walls.append(Wall.init(cell.key_ptr.toVec2())),
-                Cell.Spawner => try spawners.append(Spawner(Enemy3).init(cell.key_ptr.toVec2())),
-                Cell.Player => {},
-            }
-        }
-        return .{
-            .walls = walls,
-            .spawners = spawners,
-            .rng = std.rand.DefaultPrng.init(0),
-        };
-    }
-    fn draw(self: *const Dungeon) void {
-        for (self.walls.items) |w| {
-            w.draw();
-        }
-    }
-};
-
 fn getHints(allocator: std.mem.Allocator, target: rl.Vector2, cells: std.AutoHashMap(Position, Cell)) !std.AutoHashMap(Position, Position) {
     var arena = std.heap.ArenaAllocator.init(allocator);
     var sol = std.AutoHashMap(Position, Position).init(arena.allocator());
@@ -195,40 +146,33 @@ fn getHints(allocator: std.mem.Allocator, target: rl.Vector2, cells: std.AutoHas
 const Health = struct { u32 };
 const Transform = struct { position: rl.Vector2 };
 const Direction = struct { rl.Vector2 };
-const NewGun = struct { lastFired: f64 };
+const Gun = struct { lastFired: f64 };
 const DeathTime = struct { f64 };
 const DynamicCollider = struct { radius: f32 };
 const WallTag = struct {};
 const EnemyTag = struct {};
 const BulletTag = struct {};
 const PlayerTag = struct {};
+const SpawnerTag = struct {};
+const NextSpawn = struct { time: f64 };
 
-const Player = .{ Transform, Health, NewGun, DynamicCollider, PlayerTag };
+const EnemySpawner = .{ Transform, NextSpawn, SpawnerTag };
+const Player = .{ Transform, Health, Gun, DynamicCollider, PlayerTag };
 const Bullet = .{ Transform, DeathTime, Direction, DynamicCollider, BulletTag };
 const Enemy = .{ Transform, Health, EnemyTag, DynamicCollider };
-const Wall2 = .{ Transform, WallTag };
-const Enemy3 = struct {
-    transform: Transform,
-    health: Health,
-    tag: EnemyTag,
-    collider: DynamicCollider,
-    fn init(position: rl.Vector2) @This() {
-        return .{ .transform = .{ .position = position }, .health = .{config.enemy.health}, .tag = EnemyTag{}, .collider = DynamicCollider{ .radius = config.character.radius } };
-    }
-};
+const Wall = .{ Transform, WallTag };
+// TODO different max_entities for different entities
+const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy, Wall, EnemySpawner });
 
 const Status = union(enum) {
     score: u32,
     health: f32,
 };
 
-// different max_entities for different entities
 pub const World = struct {
-    const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy, Wall2 });
     score: u32,
     camera: rl.Camera3D,
     allocator: std.mem.Allocator,
-    dungeon: Dungeon,
     ecs: Ecs,
     cells: std.AutoHashMap(Position, Cell),
     pub fn init(allocator: std.mem.Allocator) !World {
@@ -240,7 +184,7 @@ pub const World = struct {
                 if (cell.value_ptr.* == Cell.Player)
                     break cell.key_ptr.toVec2();
             } else rl.Vector2.init(0, 0);
-            ecs.add(.{ Health{config.player.health}, Transform{ .position = pos }, NewGun{ .lastFired = 0 }, DynamicCollider{ .radius = config.character.radius }, PlayerTag{} });
+            ecs.add(.{ Health{config.player.health}, Transform{ .position = pos }, Gun{ .lastFired = 0 }, DynamicCollider{ .radius = config.character.radius }, PlayerTag{} });
         }
         const camera = rl.Camera3D{
             .position = config.player.cameraDelta,
@@ -249,8 +193,15 @@ pub const World = struct {
             .fovy = 60,
             .projection = rl.CameraProjection.camera_perspective,
         };
-        const dungeon = try Dungeon.init(allocator, cells);
-        return .{ .allocator = allocator, .dungeon = dungeon, .ecs = ecs, .camera = camera, .cells = cells, .score = 0 };
+        {
+            var it = cells.iterator();
+            while (it.next()) |entry| switch (entry.value_ptr.*) {
+                .Wall => ecs.add(.{ Transform{ .position = entry.key_ptr.toVec2() }, WallTag{} }),
+                .Player => {},
+                .Spawner => ecs.add(.{ Transform{ .position = entry.key_ptr.toVec2() }, NextSpawn{ .time = 0.0 }, SpawnerTag{} }),
+            };
+        }
+        return .{ .allocator = allocator, .ecs = ecs, .camera = camera, .cells = cells, .score = 0 };
     }
     pub fn getStatus(self: *World) Status {
         var q = self.ecs.query(struct { health: Health, tag: PlayerTag });
@@ -259,9 +210,18 @@ pub const World = struct {
     }
     pub fn update(self: *World) !void {
         const movement = Controller.getInput();
-        for (self.dungeon.spawners.items) |*spawner| {
-            if (spawner.spawn()) |enemy| {
-                self.ecs.add(enemy);
+        {
+            var q = self.ecs.query(struct { transform: Transform, nextSpawn: *NextSpawn, tag: SpawnerTag });
+            var it = q.iterator();
+            while (it.next()) |spawner| {
+                if (rl.getTime() < spawner.nextSpawn.time) continue;
+                spawner.nextSpawn.time = rl.getTime() + 1.0 / config.enemy.spawnRate;
+                self.ecs.add(.{
+                    .health = Health{config.enemy.health},
+                    .transform = Transform{ .position = spawner.transform.position },
+                    .collider = DynamicCollider{ .radius = config.character.radius },
+                    .tag = EnemyTag{},
+                });
             }
         }
         const hints = hints: {
@@ -289,7 +249,7 @@ pub const World = struct {
                 }
             }
         }
-        // TODO bullets going through walls
+        // TODO bullets going through walls (when one over the other)
         {
             var q = self.ecs.query(struct { transform: *Transform, dir: Direction });
             var it = q.iterator();
@@ -298,7 +258,7 @@ pub const World = struct {
             }
         }
         if (movement.shoot) {
-            var q = self.ecs.query(struct { transform: Transform, gun: *NewGun });
+            var q = self.ecs.query(struct { transform: Transform, gun: *Gun });
             var it = q.iterator();
             while (it.next()) |player| {
                 const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
@@ -321,22 +281,22 @@ pub const World = struct {
             var itX = q.iterator();
             while (itX.next()) |x| {
                 var itY = q.iterator();
-                while (itY.next()) |y| {
-                    if (dynamicCollide(x, y)) |dir| {
-                        x.transform.position = x.transform.position.add(dir.scale(0.5));
-                        y.transform.position = y.transform.position.subtract(dir.scale(0.5));
-                        if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
-                            if (itX.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
-                                enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
-                                itX.destroy(&self.ecs);
-                            }
-                            if (itX.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
-                                p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
-                            }
+                while (itY.next()) |y| if (dynamicCollide(x, y)) |dir| {
+                    x.transform.position = x.transform.position.add(dir.scale(0.5));
+                    y.transform.position = y.transform.position.subtract(dir.scale(0.5));
+                    if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                        if (itX.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
+                            enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
+                            itX.destroy(&self.ecs);
+                        }
+                        if (itX.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
+                            p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
                         }
                     }
-                }
-                for (self.dungeon.walls.items) |*wall| if (wall.directionTo(x)) |dir| {
+                };
+                var qWall = self.ecs.query(struct { transform: Transform, tag: WallTag });
+                var itWall = qWall.iterator();
+                while (itWall.next()) |wall| if (directionTo(wall, x)) |dir| {
                     x.transform.position = x.transform.position.add(dir);
                 };
             }
@@ -390,14 +350,18 @@ pub const World = struct {
             while (it.next()) |enemy| {
                 const start = rl.Vector3.init(enemy.transform.position.x, config.character.radius, enemy.transform.position.y);
                 const end = rl.Vector3.init(enemy.transform.position.x, config.character.height - config.character.radius, enemy.transform.position.y);
-                rl.drawCapsule(start, end, config.character.radius, 10, 1, rl.Color.fromNormalized(rl.Vector4.init(
-                    @as(f32, @floatFromInt(enemy.health[0])) / @as(f32, config.enemy.health),
-                    0,
-                    0.2,
-                    1,
-                )));
+                const color = rl.Color.fromNormalized(rl.Vector4.init(@as(f32, @floatFromInt(enemy.health[0])) / config.enemy.health, 0, 0.2, 1));
+                rl.drawCapsule(start, end, config.character.radius, 10, 1, color);
             }
         }
-        self.dungeon.draw();
+        {
+            var q = self.ecs.query(struct { transform: Transform, tag: WallTag });
+            var it = q.iterator();
+            while (it.next()) |wall| {
+                const pos = rl.Vector3.init(wall.transform.position.x, 1, wall.transform.position.y);
+                const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
+                rl.drawCubeV(pos, size, rl.Color.dark_blue);
+            }
+        }
     }
 };
