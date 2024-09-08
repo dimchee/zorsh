@@ -1,13 +1,13 @@
 const std = @import("std");
 
 pub const Segment = struct { min: f32, max: f32 };
-const Collision = struct { usize, usize };
+pub const Collision = struct { usize, usize };
 const End = enum { Left, Right };
 const Edge = struct { tag: End, index: usize, value: f32 };
 
 const Collisions = std.AutoHashMap(Collision, void);
 
-pub fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Collision) {
+fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Collision) {
     var sol = std.ArrayList(Collision).init(allocator);
     var it = colls[0].keyIterator();
     while (it.next()) |x| {
@@ -26,6 +26,13 @@ pub fn collisions(allocator: std.mem.Allocator, axisSegments: anytype) !std.Arra
     inline for (axisSegments, 0..) |segments, i|
         colls[i] = try getCollisions(arena.allocator(), segments);
     return intersection(allocator, colls);
+    // const sol = try intersection(allocator, colls);
+    // std.mem.sort(Collision, sol.items, {}, struct {
+    //     fn lessThan(_: void, x: Collision, y: Collision) bool {
+    //         return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
+    //     }
+    // }.lessThan);
+    // return sol;
 }
 
 fn getCollisions(allocator: std.mem.Allocator, segments: []const Segment) !Collisions {

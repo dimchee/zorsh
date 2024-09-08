@@ -1,7 +1,6 @@
 const rl = @import("raylib");
-const rg = @import("raygui");
 const std = @import("std");
-const coll = @import("collision.zig");
+const collision = @import("collision.zig");
 const ecslib = @import("ecs.zig");
 
 // speeds is in units per frame, rate is in objects per second
@@ -278,10 +277,18 @@ pub const World = struct {
         }
         {
             var q = self.ecs.query(Collider);
-            var itX = q.iterator();
-            while (itX.next()) |x| {
-                var itY = q.iterator();
-                while (itY.next()) |y| if (dynamicCollide(x, y)) |dir| {
+            var it = q.iterator();
+            var xs = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
+            var ys = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
+            while (it.next()) |e| {
+                try xs.append(.{ .min = e.transform.position.x - e.collider.radius, .max = e.transform.position.x + e.collider.radius });
+                try ys.append(.{ .min = e.transform.position.y - e.collider.radius, .max = e.transform.position.y + e.collider.radius });
+            }
+            const coll = try collision.collisions(self.allocator, .{ xs.items, ys.items });
+            for (coll.items) |c| {
+                var itX = q.from(c[0]);
+                var itY = q.from(c[1]);
+                if (itX.current()) |x| if (itY.current()) |y| if (dynamicCollide(x, y)) |dir| {
                     x.transform.position = x.transform.position.add(dir.scale(0.5));
                     y.transform.position = y.transform.position.subtract(dir.scale(0.5));
                     if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
@@ -294,6 +301,26 @@ pub const World = struct {
                         }
                     }
                 };
+            }
+        }
+        {
+            var q = self.ecs.query(Collider);
+            var itX = q.iterator();
+            while (itX.next()) |x| {
+                // var itY = q.iterator();
+                // while (itY.next()) |y| if (dynamicCollide(x, y)) |dir| {
+                //     x.transform.position = x.transform.position.add(dir.scale(0.5));
+                //     y.transform.position = y.transform.position.subtract(dir.scale(0.5));
+                //     if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                //         if (itX.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
+                //             enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
+                //             itX.destroy(&self.ecs);
+                //         }
+                //         if (itX.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
+                //             p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
+                //         }
+                //     }
+                // };
                 var qWall = self.ecs.query(struct { transform: Transform, tag: WallTag });
                 var itWall = qWall.iterator();
                 while (itWall.next()) |wall| if (directionTo(wall, x)) |dir| {

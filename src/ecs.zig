@@ -119,11 +119,12 @@ fn Query(bundles: []const []const type, S: type) type {
             };
         }
         fn normaliseIndex(bundle: usize, element: usize, indices: []ArrayStruct(S)) @This() {
-            if (bundle >= bundlesFiltered.len) return .end;
-            if (element < indices[bundle].len) return normal(bundle, element);
-            var i = bundle + 1;
-            return while (i < bundlesFiltered.len) : (i += 1) {
-                if (indices[i].len != 0) break normal(i, 0);
+            var newBundle = bundle;
+            var newElement = element;
+            return while (newBundle < bundlesFiltered.len) {
+                if (newElement < indices[newBundle].len) break normal(newBundle, newElement);
+                newElement -= indices[newBundle].len;
+                newBundle += 1;
             } else .end;
         }
         fn next(self: @This(), indices: []ArrayStruct(S)) @This() {
@@ -169,8 +170,7 @@ fn Query(bundles: []const []const type, S: type) type {
                 self.index = .{ .hold = index };
             }
         }
-        pub fn next(self: *@This()) ?S {
-            self.index = self.index.next(self.indices);
+        pub fn current(self: *@This()) ?S {
             if (self.index.get()) |index| {
                 var s: S = undefined;
                 inline for (std.meta.fields(S)) |field| {
@@ -179,6 +179,10 @@ fn Query(bundles: []const []const type, S: type) type {
                 }
                 return s;
             } else return null;
+        }
+        pub fn next(self: *@This()) ?S {
+            self.index = self.index.next(self.indices);
+            return self.current();
         }
     };
     return struct {
@@ -193,6 +197,9 @@ fn Query(bundles: []const []const type, S: type) type {
                         slice.items(Bundle(components).getFieldTag(field.type));
             }
             return .{ .indices = indices };
+        }
+        pub fn from(self: *@This(), i: usize) QueryIterator {
+            return .{ .index = QueryIndex.normaliseIndex(0, i, &self.indices), .indices = &self.indices };
         }
         pub fn iterator(self: *@This()) QueryIterator {
             return .{ .index = .start, .indices = &self.indices };
