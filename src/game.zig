@@ -7,7 +7,7 @@ const ecslib = @import("ecs.zig");
 pub const config = .{
     .wall = .{ .height = 2, .size = 1 },
     .character = .{ .radius = 0.5, .height = 2, .speed = 0.1 },
-    .bullet = .{ .radius = 0.1, .speed = 0.2, .damage = 10, .rate = 10.0, .lifetime = 2 },
+    .bullet = .{ .radius = 0.1, .speed = 0.1, .damage = 10, .rate = 5.0, .lifetime = 2 },
     .player = .{ .health = 100, .reward = 1, .cameraDelta = rl.Vector3.init(0, 10, 4) },
     .enemy = .{ .speedFactor = 0.6, .spawnRate = 0.5, .health = 50, .damage = 2 },
     .map =
@@ -62,33 +62,10 @@ const Controller = struct {
 };
 
 const Collider = struct { transform: *Transform, collider: DynamicCollider };
-fn dynamicCollide(x: Collider, y: Collider) bool {
-    const dir = circlesCollisionDirection(
-        .{ .center = x.transform.position, .radius = x.collider.radius },
-        .{ .center = y.transform.position, .radius = y.collider.radius },
-    );
-    if (dir.lengthSqr() > 0) {
-        //TODO remove
-        x.transform.position = x.transform.position.add(dir.scale(0.5));
-        y.transform.position = y.transform.position.subtract(dir.scale(0.5));
-        return true;
-    }
-    return false;
-}
-
-const Circle = struct { center: rl.Vector2, radius: f32 };
-fn circlesCollisionDirection(a: Circle, b: Circle) rl.Vector2 {
-    const scale = @max(a.radius + b.radius - a.center.distance(b.center), 0);
-    return a.center.subtract(b.center).normalize().scale(scale);
-}
-
-fn staticCollide(dungeon: *const Dungeon, x: anytype) void {
-    for (dungeon.walls.items) |*wall| {
-        const dir = wall.directionTo(x.position);
-        if (dir.lengthSqr() < config.character.radius * config.character.radius) {
-            x.position = dir.normalize().scale(config.character.radius - dir.length()).add(x.position);
-        }
-    }
+fn dynamicCollide(x: Collider, y: Collider) ?rl.Vector2 {
+    const dif = x.transform.position.subtract(y.transform.position);
+    const scale = x.collider.radius + y.collider.radius - dif.length();
+    return if (scale > 0) dif.normalize().scale(scale) else null;
 }
 
 const Wall = struct {
@@ -317,7 +294,7 @@ pub const World = struct {
             if (isReadyToFire) {
                 self.ecs.add(.{
                     Transform{ .position = movement.direction.normalize()
-                        .scale(config.character.radius + config.bullet.radius * 1.05)
+                        .scale(config.character.radius + config.bullet.radius * 1.001)
                         .add(player.transform.position) },
                     DeathTime{rl.getTime() + config.bullet.lifetime},
                     Direction{movement.direction},
@@ -328,31 +305,38 @@ pub const World = struct {
             }
         }
         {
+            var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
+            var bIt = bq.iterator();
+            while (bIt.next()) |bullet| {
+                bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
+            }
+        }
+        {
             var dynamicQ = self.ecs.query(Collider);
             var dynamicIt1 = dynamicQ.iterator();
             while (dynamicIt1.next()) |x| {
                 var dynamicIt2 = dynamicQ.iterator();
                 while (dynamicIt2.next()) |y| {
-                    if (dynamicCollide(x, y)) {
-                        if (dynamicIt1.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
-                            p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
-                        }
-                        if (dynamicIt1.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
-                            if (dynamicIt2.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                    if (dynamicCollide(x, y)) |dir| {
+                        x.transform.position = x.transform.position.add(dir.scale(0.5));
+                        y.transform.position = y.transform.position.subtract(dir.scale(0.5));
+                        if (dynamicIt2.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                            if (dynamicIt1.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
                                 enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
                                 dynamicIt1.destroy(&self.ecs);
+                            }
+                            if (dynamicIt1.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
+                                p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
                             }
                         }
                     }
                 }
-                staticCollide(&self.dungeon, x.transform);
-            }
-        }
-        {
-            var bq = self.ecs.query(struct { transform: *Transform, deathTime: DeathTime, dir: Direction });
-            var bIt = bq.iterator();
-            while (bIt.next()) |bullet| {
-                bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
+                for (self.dungeon.walls.items) |*wall| {
+                    const dir = wall.directionTo(x.transform.position);
+                    if (dir.lengthSqr() < x.collider.radius * x.collider.radius) {
+                        x.transform.position = dir.normalize().scale(x.collider.radius - dir.length()).add(x.transform.position);
+                    }
+                }
             }
         }
         {
@@ -394,7 +378,7 @@ pub const World = struct {
             var it = q.iterator();
             while (it.next()) |bullet| {
                 const pos = rl.Vector3.init(bullet.transform.position.x, 1.2, bullet.transform.position.y);
-                rl.drawSphere(pos, 0.1, rl.Color.white);
+                rl.drawSphere(pos, config.bullet.radius, rl.Color.white);
             }
         }
         {
