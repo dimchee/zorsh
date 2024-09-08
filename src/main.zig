@@ -47,9 +47,16 @@ const State = struct {
     fn gameLoop(world: *game.World) !Internal {
         try world.update();
         world.draw();
-        var stats = world.getPlayerStats();
-        _ = rg.guiProgressBar(rl.Rectangle.init(halfX() - 100 / 2, halfY() - 120, 100, 20), "", "", &stats.health, 0, game.config.player.health);
-        return if (stats.health == 0) .{ .finished = stats.score } else .{ .running = world.* };
+        switch (world.getStatus()) {
+            .score => |score| {
+                return .{ .finished = score };
+            },
+            .health => |health| {
+                var h = health;
+                _ = rg.guiProgressBar(rl.Rectangle.init(halfX() - 100 / 2, halfY() - 120, 100, 20), "", "", &h, 0, 1.0);
+                return .{ .running = world.* };
+            },
+        }
     }
 };
 
@@ -78,5 +85,9 @@ pub fn main() anyerror!void {
         rl.clearBackground(rl.Color.ray_white);
 
         try state.update();
+
+        var buf: [24:0]u8 = undefined;
+        _ = try std.fmt.bufPrintZ(&buf, "FPS: {d:<4}", .{rl.getFPS()});
+        rl.drawText(&buf, 20, 20, 20, rl.Color.black);
     }
 }
