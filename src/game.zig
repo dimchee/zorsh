@@ -76,11 +76,6 @@ fn directionTo(wall: anytype, x: Collider) ?rl.Vector2 {
     if (difX > 0 and difY > 0) return if (difX < difY) rl.Vector2.init(sgnX * difX, 0) else rl.Vector2.init(0, sgnY * difY);
     return null;
 }
-const Spawner = struct {
-    position: rl.Vector2,
-    nextSpawn: f64,
-};
-
 const Cell = enum { Wall, Player, Spawner };
 const Position = struct {
     x: i32,
@@ -244,7 +239,7 @@ pub const World = struct {
                         .normalize().scale(config.character.speed * config.enemy.speedFactor)
                         .add(enemy.transform.position);
                 } else {
-                    std.log.debug("No hint for enemy at {}", .{enemy.transform.position});
+                    std.log.warn("No hint for enemy at {}", .{enemy.transform.position});
                 }
             }
         }
@@ -277,27 +272,31 @@ pub const World = struct {
         }
         {
             var q = self.ecs.query(Collider);
-            var it = q.iterator();
-            var xs = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
-            var ys = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
-            while (it.next()) |e| {
-                try xs.append(.{ .min = e.transform.position.x - e.collider.radius, .max = e.transform.position.x + e.collider.radius });
-                try ys.append(.{ .min = e.transform.position.y - e.collider.radius, .max = e.transform.position.y + e.collider.radius });
-            }
-            const coll = try collision.collisions(self.allocator, .{ xs.items, ys.items });
+            const coll = collisions: {
+                var it = q.iterator();
+                var xs = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
+                var ys = try std.ArrayList(collision.Segment).initCapacity(self.allocator, 100);
+                while (it.next()) |e| {
+                    try xs.append(.{ .min = e.transform.position.x - e.collider.radius, .max = e.transform.position.x + e.collider.radius });
+                    try ys.append(.{ .min = e.transform.position.y - e.collider.radius, .max = e.transform.position.y + e.collider.radius });
+                }
+                break :collisions try collision.collisions(self.allocator, .{ xs.items, ys.items });
+            };
             for (coll.items) |c| {
                 var itX = q.from(c[0]);
                 var itY = q.from(c[1]);
                 if (itX.current()) |x| if (itY.current()) |y| if (dynamicCollide(x, y)) |dir| {
                     x.transform.position = x.transform.position.add(dir.scale(0.5));
                     y.transform.position = y.transform.position.subtract(dir.scale(0.5));
-                    if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
-                        if (itX.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
-                            enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
-                            itX.destroy(&self.ecs);
-                        }
-                        if (itX.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
-                            p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
+                    inline for (.{ &itX, &itY }, .{ &itY, &itX }) |itA, itB| {
+                        if (itA.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
+                            if (itB.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
+                                enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
+                                itB.destroy(&self.ecs);
+                            }
+                            if (itB.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
+                                p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
+                            }
                         }
                     }
                 };
@@ -307,20 +306,6 @@ pub const World = struct {
             var q = self.ecs.query(Collider);
             var itX = q.iterator();
             while (itX.next()) |x| {
-                // var itY = q.iterator();
-                // while (itY.next()) |y| if (dynamicCollide(x, y)) |dir| {
-                //     x.transform.position = x.transform.position.add(dir.scale(0.5));
-                //     y.transform.position = y.transform.position.subtract(dir.scale(0.5));
-                //     if (itY.refine(struct { health: *Health, tag: EnemyTag }, &self.ecs)) |enemy| {
-                //         if (itX.refine(struct { tag: BulletTag }, &self.ecs)) |_| {
-                //             enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
-                //             itX.destroy(&self.ecs);
-                //         }
-                //         if (itX.refine(struct { health: *Health, tag: PlayerTag }, &self.ecs)) |p| {
-                //             p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
-                //         }
-                //     }
-                // };
                 var qWall = self.ecs.query(struct { transform: Transform, tag: WallTag });
                 var itWall = qWall.iterator();
                 while (itWall.next()) |wall| if (directionTo(wall, x)) |dir| {
@@ -390,5 +375,30 @@ pub const World = struct {
                 rl.drawCubeV(pos, size, rl.Color.dark_blue);
             }
         }
+        // Debug collisions
+        // {
+        //     for (self.xs.items, self.ys.items) |x, y| {
+        //         const pos = rl.Vector3.init((x.min + x.max) / 2, 1, (y.min + y.max) / 2);
+        //         const size = rl.Vector3.init(x.max - x.min, 0.1, y.max - y.min);
+        //         rl.drawCubeV(pos, size, rl.Color.red);
+        //     }
+        //     const coll = collision.collisions(self.allocator, .{ self.xs.items, self.ys.items }) catch unreachable();
+        //     for (coll.items) |c| {
+        //         {
+        //             const x = self.xs.items[c[0]];
+        //             const y = self.ys.items[c[0]];
+        //             const pos = rl.Vector3.init((x.min + x.max) / 2, 1.5, (y.min + y.max) / 2);
+        //             const size = rl.Vector3.init(x.max - x.min, 0.1, y.max - y.min);
+        //             rl.drawCubeV(pos, size, rl.Color.yellow);
+        //         }
+        //         {
+        //             const x = self.xs.items[c[1]];
+        //             const y = self.ys.items[c[1]];
+        //             const pos = rl.Vector3.init((x.min + x.max) / 2, 1.5, (y.min + y.max) / 2);
+        //             const size = rl.Vector3.init(x.max - x.min, 0.1, y.max - y.min);
+        //             rl.drawCubeV(pos, size, rl.Color.yellow);
+        //         }
+        //     }
+        // }
     }
 };

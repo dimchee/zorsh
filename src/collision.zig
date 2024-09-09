@@ -53,7 +53,8 @@ fn getCollisions(allocator: std.mem.Allocator, segments: []const Segment) !Colli
     for (edges.items) |edge| {
         if (edge.tag == End.Left) {
             var iter = touching.keyIterator();
-            while (iter.next()) |other| try colls.put(.{ edge.index, other.* }, void{});
+            while (iter.next()) |other|
+                try colls.put(.{ @min(edge.index, other.*), @max(edge.index, other.*) }, void{});
             try touching.put(edge.index, void{});
         } else _ = touching.remove(edge.index);
     }
@@ -146,6 +147,16 @@ test "collisions4" {
     try std.testing.expectEqualDeep(
         // &[_]Collision{ .{ 2, 0 }, .{ 1, 0 }, .{ 2, 1 } },
         &[_]Collision{ .{ 1, 2 }, .{ 0, 1 }, .{ 0, 2 } },
+        sol.items,
+    );
+}
+test "collisions5" {
+    const xs = [_]Segment{ .{ .min = 4, .max = 5 }, .{ .min = 4.5, .max = 5.5 } };
+    const ys = [_]Segment{ .{ .min = 10, .max = 11 }, .{ .min = 9.5, .max = 10.5 } };
+    var sol = try collisions(std.testing.allocator, .{ &xs, &ys });
+    defer sol.deinit();
+    try std.testing.expectEqualDeep(
+        &[_]Collision{.{ 0, 1 }},
         sol.items,
     );
 }
