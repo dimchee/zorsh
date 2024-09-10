@@ -30,36 +30,6 @@ pub const config = .{
     \\ [][][][][][][][][][][][][][][][][][][][][][][][][][]
     ,
 };
-const Controller = struct {
-    shoot: bool,
-    direction: rl.Vector2,
-    delta: rl.Vector2,
-
-    fn getInput() Controller {
-        var shoot = false;
-        const bindings = [_]struct { rl.KeyboardKey, rl.Vector2 }{
-            .{ rl.KeyboardKey.key_w, .{ .x = 0, .y = 1 } },
-            .{ rl.KeyboardKey.key_s, .{ .x = 0, .y = -1 } },
-            .{ rl.KeyboardKey.key_a, .{ .x = 1, .y = 0 } },
-            .{ rl.KeyboardKey.key_d, .{ .x = -1, .y = 0 } },
-        };
-        const vec = for (bindings) |kv| {
-            if (rl.isKeyDown(kv[0])) break kv[1];
-        } else rl.Vector2{ .x = 0, .y = 0 };
-
-        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space)) {
-            shoot = true;
-        }
-        var dir = rl.getMousePosition();
-        dir.x -= @as(f32, @floatFromInt(rl.getScreenWidth())) / 2;
-        dir.y -= @as(f32, @floatFromInt(rl.getScreenHeight())) / 2;
-        return Controller{
-            .shoot = shoot,
-            .direction = dir,
-            .delta = vec.normalize().scale(config.character.speed).rotate(-std.math.atan2(dir.x, dir.y)),
-        };
-    }
-};
 
 const Collider = struct { transform: *Transform, collider: DynamicCollider };
 fn dynamicCollide(x: Collider, y: Collider) ?rl.Vector2 {
@@ -160,7 +130,13 @@ const Ecs = ecslib.Ecs(.{ Player, Bullet, Enemy, Wall, EnemySpawner });
 
 const Status = union(enum) {
     score: u32,
-    health: f32,
+    healthPercentage: f32,
+};
+
+pub const Input = struct {
+    shoot: bool,
+    movement: rl.Vector2,
+    direction: rl.Vector2,
 };
 
 pub const World = struct {
@@ -200,10 +176,9 @@ pub const World = struct {
     pub fn getStatus(self: *World) Status {
         var q = self.ecs.query(struct { health: Health, tag: PlayerTag });
         var it = q.iterator();
-        return if (it.next()) |x| .{ .health = @as(f32, @floatFromInt(x.health[0])) / config.player.health } else .{ .score = self.score };
+        return if (it.next()) |x| .{ .healthPercentage = @as(f32, @floatFromInt(x.health[0])) / config.player.health } else .{ .score = self.score };
     }
-    pub fn update(self: *World) !void {
-        const movement = Controller.getInput();
+    pub fn update(self: *World, input: Input) !void {
         {
             var q = self.ecs.query(struct { transform: Transform, nextSpawn: *NextSpawn, tag: SpawnerTag });
             var it = q.iterator();
@@ -223,7 +198,10 @@ pub const World = struct {
             var it = q.iterator();
             var player = it.next().?;
             std.debug.assert(it.next() == null);
-            player.transform.position = player.transform.position.add(movement.delta);
+            player.transform.position = input.movement
+                .scale(config.character.speed)
+                .rotate(-input.direction.angle(rl.Vector2.init(0, 1)))
+                .add(player.transform.position);
             const pos3d = rl.Vector3.init(player.transform.position.x, 0, player.transform.position.y);
             self.camera.position = pos3d.add(config.player.cameraDelta);
             self.camera.target = pos3d;
@@ -251,18 +229,18 @@ pub const World = struct {
                 bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
             }
         }
-        if (movement.shoot) {
+        if (input.shoot) {
             var q = self.ecs.query(struct { transform: Transform, gun: *Gun });
             var it = q.iterator();
             while (it.next()) |player| {
                 const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
                 if (isReadyToFire) {
                     self.ecs.add(.{
-                        Transform{ .position = movement.direction.normalize()
+                        Transform{ .position = input.direction
                             .scale(config.character.radius + config.bullet.radius)
                             .add(player.transform.position) },
                         DeathTime{rl.getTime() + config.bullet.lifetime},
-                        Direction{movement.direction},
+                        Direction{input.direction},
                         DynamicCollider{ .radius = config.bullet.radius },
                         BulletTag{},
                     });

@@ -26,34 +26,46 @@ const State = struct {
     fn finished(score: Score) !Internal {
         var buf: [24:0]u8 = undefined;
         _ = try std.fmt.bufPrintZ(&buf, "Score: {d:<4}", .{score});
-        _ = rg.guiLabel(rl.Rectangle.init(halfX() - 240 / 2, halfY() - 300, 300, 100), &buf);
-        if (rg.guiButton(rl.Rectangle.init(halfX() - 500 / 2, halfY(), 500, 100), "Menu") != 0) {
+        _ = rg.guiLabel(rl.Rectangle.init(width() / 2 - 240 / 2, height() / 2 - 300, 300, 100), &buf);
+        if (rg.guiButton(rl.Rectangle.init(width() / 2 - 500 / 2, height() / 2, 500, 100), "Menu") != 0) {
             return .{ .menu = void{} };
         }
         return .{ .finished = score };
     }
     fn gui(self: *const State) !Internal {
-        if (rg.guiButton(rl.Rectangle.init(halfX() - 500 / 2, halfY() - 100, 500, 100), "Start") != 0) {
+        if (rg.guiButton(rl.Rectangle.init(width() / 2 - 500 / 2, height() / 2 - 100, 500, 100), "Start") != 0) {
             return .{ .running = try game.World.init(self.allocator) };
         }
         return .{ .menu = void{} };
     }
-    fn halfX() f32 {
-        return @floatFromInt(@divTrunc(rl.getScreenWidth(), 2));
+    fn width() f32 {
+        return @floatFromInt(rl.getScreenWidth());
     }
-    fn halfY() f32 {
-        return @floatFromInt(@divTrunc(rl.getScreenHeight(), 2));
+    fn height() f32 {
+        return @floatFromInt(rl.getScreenHeight());
     }
     fn gameLoop(world: *game.World) !Internal {
-        try world.update();
+        var input: game.Input = undefined;
+        const bindings = [_]struct { rl.KeyboardKey, rl.Vector2 }{
+            .{ rl.KeyboardKey.key_w, .{ .x = 0, .y = 1 } },
+            .{ rl.KeyboardKey.key_s, .{ .x = 0, .y = -1 } },
+            .{ rl.KeyboardKey.key_a, .{ .x = 1, .y = 0 } },
+            .{ rl.KeyboardKey.key_d, .{ .x = -1, .y = 0 } },
+        };
+        input.movement = for (bindings) |kv| {
+            if (rl.isKeyDown(kv[0])) break kv[1];
+        } else rl.Vector2{ .x = 0, .y = 0 };
+        input.shoot = rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space);
+        input.direction = rl.getMousePosition().subtract(rl.Vector2.init(width() / 2, height() / 2)).normalize();
+        try world.update(input);
         world.draw();
         switch (world.getStatus()) {
             .score => |score| {
                 return .{ .finished = score };
             },
-            .health => |health| {
+            .healthPercentage => |health| {
                 var h = health;
-                _ = rg.guiProgressBar(rl.Rectangle.init(halfX() - 100 / 2, halfY() - 120, 100, 20), "", "", &h, 0, 1.0);
+                _ = rg.guiProgressBar(rl.Rectangle.init(width() / 2 - 100 / 2, height() / 2 - 120, 100, 20), "", "", &h, 0, 1.0);
                 return .{ .running = world.* };
             },
         }
