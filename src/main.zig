@@ -2,6 +2,7 @@ const rl = @import("raylib");
 const rg = @import("raygui");
 const std = @import("std");
 const game = @import("game.zig");
+const render = @import("render.zig");
 
 const Score = u32;
 
@@ -58,12 +59,12 @@ const State = struct {
         input.shoot = rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space);
         input.direction = rl.getMousePosition().subtract(rl.Vector2.init(width() / 2, height() / 2)).normalize();
         try world.update(input);
-        world.draw();
         switch (world.getStatus()) {
             .score => |score| {
                 return .{ .finished = score };
             },
             .healthPercentage => |health| {
+                render.draw(&world.ecs);
                 var h = health;
                 _ = rg.guiProgressBar(rl.Rectangle.init(width() / 2 - 100 / 2, height() / 2 - 120, 100, 20), "", "", &h, 0, 1.0);
                 return .{ .running = world.* };

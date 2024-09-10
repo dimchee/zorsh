@@ -1,9 +1,35 @@
 const std = @import("std");
+const rl = @import("raylib");
+const config = @import("config.zig");
 
 pub const Segment = struct { min: f32, max: f32 };
 pub const Collision = struct { usize, usize };
 const End = enum { Left, Right };
 const Edge = struct { tag: End, index: usize, value: f32 };
+
+pub fn Collider(Shape: type) type {
+    return struct { transform: *config.Transform, shape: Shape };
+}
+pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
+    if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Circle)) {
+        const dif = x.transform.position.subtract(y.transform.position);
+        const scale = x.shape.radius + y.shape.radius - dif.length();
+        return if (scale > 0) dif.normalize().scale(scale) else null;
+    }
+    if (@TypeOf(x) == Collider(config.Square) and @TypeOf(y) == Collider(config.Circle)) {
+        const sgnX: f32 = if (y.transform.position.x - x.transform.position.x > 0) 1 else -1;
+        const sgnY: f32 = if (y.transform.position.y - x.transform.position.y > 0) 1 else -1;
+        const difX = x.shape.size.x / 2.0 + y.shape.radius - @abs(y.transform.position.x - x.transform.position.x);
+        const difY = x.shape.size.y / 2.0 + y.shape.radius - @abs(y.transform.position.y - x.transform.position.y);
+        if (difX > 0 and difY > 0) return if (difX < difY) rl.Vector2.init(sgnX * difX, 0) else rl.Vector2.init(0, sgnY * difY);
+        return null;
+    }
+    if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Square)) {
+        return collide(y, x);
+    }
+    const msg = "Can't collide `" + @typeName(x) + "` and `" + @typeName(y) + "`";
+    @compileError(msg);
+}
 
 const Collisions = std.AutoHashMap(Collision, void);
 
