@@ -4,11 +4,16 @@ const config = @import("config.zig");
 
 pub const Segment = struct { min: f32, max: f32 };
 pub const Collision = struct { usize, usize };
+const Collisions = std.AutoHashMap(Collision, void);
 const End = enum { Left, Right };
 const Edge = struct { tag: End, index: usize, value: f32 };
 
 pub fn Collider(Shape: type) type {
     return struct { transform: *config.Transform, shape: Shape };
+}
+
+fn sqr(x: f32) f32 {
+    return x * x;
 }
 pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
     if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Circle)) {
@@ -17,11 +22,19 @@ pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
         return if (scale > 0) dif.normalize().scale(scale) else null;
     }
     if (@TypeOf(x) == Collider(config.Square) and @TypeOf(y) == Collider(config.Circle)) {
-        const sgnX: f32 = if (y.transform.position.x - x.transform.position.x > 0) 1 else -1;
-        const sgnY: f32 = if (y.transform.position.y - x.transform.position.y > 0) 1 else -1;
-        const difX = x.shape.size.x / 2.0 + y.shape.radius - @abs(y.transform.position.x - x.transform.position.x);
-        const difY = x.shape.size.y / 2.0 + y.shape.radius - @abs(y.transform.position.y - x.transform.position.y);
-        if (difX > 0 and difY > 0) return if (difX < difY) rl.Vector2.init(sgnX * difX, 0) else rl.Vector2.init(0, sgnY * difY);
+        const sDif = y.transform.position.subtract(x.transform.position);
+        const sgn = rl.Vector2.init(if (sDif.x > 0) -1 else 1, if (sDif.y > 0) -1 else 1);
+        const dif = rl.Vector2.init(@abs(sDif.x) - x.shape.size.x / 2, @abs(sDif.y) - x.shape.size.y / 2);
+        if (sqr(@max(dif.x, 0)) + sqr(@max(dif.y, 0)) < sqr(y.shape.radius)) {
+            if (dif.x > 0 and dif.y > 0) return dif.multiply(sgn).normalize().scale(dif.length() - y.shape.radius);
+            if (dif.x > 0) return rl.Vector2.init(dif.x - y.shape.radius, 0).multiply(sgn);
+            if (dif.y > 0) return rl.Vector2.init(0, dif.y - y.shape.radius).multiply(sgn);
+            // return dif.multiply(sgn).normalize().scale(dif.length() + y.shape.radius + 0.001);
+            return if (dif.x > dif.y)
+                rl.Vector2.init(dif.x - y.shape.radius, 0).multiply(sgn)
+            else
+                rl.Vector2.init(0, dif.y - y.shape.radius).multiply(sgn);
+        }
         return null;
     }
     if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Square)) {
@@ -30,8 +43,6 @@ pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
     const msg = "Can't collide `" + @typeName(x) + "` and `" + @typeName(y) + "`";
     @compileError(msg);
 }
-
-const Collisions = std.AutoHashMap(Collision, void);
 
 fn intersection(allocator: std.mem.Allocator, colls: anytype) !std.ArrayList(Collision) {
     var sol = std.ArrayList(Collision).init(allocator);
@@ -52,13 +63,6 @@ pub fn collisions(allocator: std.mem.Allocator, axisSegments: anytype) !std.Arra
     inline for (axisSegments, 0..) |segments, i|
         colls[i] = try getCollisions(arena.allocator(), segments);
     return intersection(allocator, colls);
-    // const sol = try intersection(allocator, colls);
-    // std.mem.sort(Collision, sol.items, {}, struct {
-    //     fn lessThan(_: void, x: Collision, y: Collision) bool {
-    //         return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
-    //     }
-    // }.lessThan);
-    // return sol;
 }
 
 fn getCollisions(allocator: std.mem.Allocator, segments: []const Segment) !Collisions {
@@ -85,12 +89,6 @@ fn getCollisions(allocator: std.mem.Allocator, segments: []const Segment) !Colli
         } else _ = touching.remove(edge.index);
     }
     return colls;
-}
-
-fn printEdges(edges: *const std.ArrayList(Edge)) void {
-    std.debug.print("[ ", .{});
-    for (edges.items) |e| std.debug.print("{d} ", .{e.value});
-    std.debug.print("]\n", .{});
 }
 
 test "collisions1" {
