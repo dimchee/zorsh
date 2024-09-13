@@ -14,13 +14,11 @@ const State = struct {
     };
     state: Internal,
     allocator: std.mem.Allocator,
-    fn init(allocator: std.mem.Allocator) State {
-        return .{ .state = .{ .menu = void{} }, .allocator = allocator };
-    }
+    textures: render.Textures,
     fn update(self: *State) !void {
         self.state = switch (self.state) {
             .menu => try self.gui(),
-            .running => |*world| try gameLoop(world),
+            .running => |*world| try self.gameLoop(world),
             .finished => |score| try finished(score),
         };
     }
@@ -45,7 +43,7 @@ const State = struct {
     fn height() f32 {
         return @floatFromInt(rl.getScreenHeight());
     }
-    fn gameLoop(world: *game.World) !Internal {
+    fn gameLoop(self: *@This(), world: *game.World) !Internal {
         var input: game.Input = undefined;
         const bindings = [_]struct { rl.KeyboardKey, rl.Vector2 }{
             .{ rl.KeyboardKey.key_w, .{ .x = 0, .y = 1 } },
@@ -64,7 +62,7 @@ const State = struct {
                 return .{ .finished = score };
             },
             .healthPercentage => |health| {
-                render.draw(&world.ecs);
+                render.draw(&world.ecs, &self.textures);
                 var h = health;
                 _ = rg.guiProgressBar(rl.Rectangle.init(width() / 2 - 100 / 2, height() / 2 - 120, 100, 20), "", "", &h, 0, 1.0);
                 return .{ .running = world.* };
@@ -86,6 +84,7 @@ pub fn main() anyerror!void {
     var state = State{
         .state = .{ .running = try game.World.init(allocator) },
         .allocator = allocator,
+        .textures = render.load_textures(),
     };
     // var state = State.init(allocator);
 

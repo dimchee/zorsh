@@ -19,7 +19,22 @@ fn posToVec3(pos: config.Position, height: f32) rl.Vector3 {
     return rl.Vector3.init(@floatFromInt(pos.x), height, @floatFromInt(pos.y));
 }
 
-pub fn draw(ecs: *config.Ecs) void {
+pub const Textures = struct { wall: rl.Material, tile: rl.Material };
+
+pub fn load_textures() Textures {
+    var wall = rl.loadTexture("assets/tiny_texture_pack_2/256x256/Brick/Brick_02-256x256.png");
+    rl.genTextureMipmaps(&wall);
+    var wallMat = rl.loadMaterialDefault();
+    rl.setTextureFilter(wall, rl.TextureFilter.texture_filter_bilinear);
+    rl.setMaterialTexture(&wallMat, rl.MaterialMapIndex.material_map_albedo, wall);
+    var tile = rl.loadTexture("assets/tiny_texture_pack_2/256x256/Tile/Tile_17-256x256.png");
+    rl.genTextureMipmaps(&tile);
+    var tileMat = rl.loadMaterialDefault();
+    rl.setTextureFilter(tile, rl.TextureFilter.texture_filter_bilinear);
+    rl.setMaterialTexture(&tileMat, rl.MaterialMapIndex.material_map_albedo, tile);
+    return .{ .wall = wallMat, .tile = tileMat };
+}
+pub fn draw(ecs: *config.Ecs, textures: *Textures) void {
     const camera = camera: {
         var q = ecs.query(struct { transform: config.Transform, tag: config.PlayerTag });
         var it = q.iterator();
@@ -29,15 +44,21 @@ pub fn draw(ecs: *config.Ecs) void {
     };
     camera.begin();
     defer camera.end();
+    const cube = rl.genMeshCube(config.wall.size, config.wall.height, config.wall.size);
+    const plane = rl.genMeshPlane(config.wall.size, config.wall.size, 1, 1);
     {
         for (config.Map.items, 0..) |cell, ind| {
             const pos = config.Map.toPos(ind).?;
             switch (cell) {
                 .Wall => {
-                    const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
-                    rl.drawCubeV(posToVec3(pos, 1), size, rl.Color.dark_blue);
+                    // const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
+                    // rl.drawCubeV(posToVec3(pos, 1), size, rl.Color.dark_blue);
+                    cube.draw(textures.wall, rl.math.matrixTranslate(@floatFromInt(pos.x), 1, @floatFromInt(pos.y)));
                 },
-                else => rl.drawPlane(posToVec3(pos, 0), rl.Vector2.init(1, 1), if ((pos.x + pos.y) % 2 == 0) rl.Color.white else rl.Color.blue),
+                else => {
+                    // rl.drawPlane(posToVec3(pos, 0), rl.Vector2.init(1, 1), if ((pos.x + pos.y) % 2 == 0) rl.Color.white else rl.Color.blue),
+                    plane.draw(textures.tile, rl.math.matrixTranslate(@floatFromInt(pos.x), 0, @floatFromInt(pos.y)));
+                },
             }
         }
     }

@@ -58,6 +58,7 @@ pub fn buildRaylib(
     const raylib = raylib_dep.module("raylib"); // main raylib module
     const raygui = raylib_dep.module("raygui"); // raygui module
     const raylib_artifact = raylib_dep.artifact("raylib"); // raylib C library
+    raylib_artifact.defineCMacro("SUPPORT_FILEFORMAT_JPG", null);
     exe.linkLibrary(raylib_artifact);
     exe.root_module.addImport("raylib", raylib);
     exe.root_module.addImport("raygui", raygui);
