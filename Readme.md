@@ -14,3 +14,6 @@
 - [x] smarter AI
 - [ ] Blinn-Phong lighting
 - [ ] spotlights
+- [ ] invisible walls
+- [ ] different guns
+- [ ] portals

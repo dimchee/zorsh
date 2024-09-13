@@ -52,6 +52,17 @@ pub fn Map(map: []const u8) type {
         else
             @compileError("Empty Map");
     };
+    const parsedWalls = walls: {
+        var walls: [parsed.items.len]Position = undefined;
+        var ind = 0;
+        for (parsed.items, 0..) |cell, i| if (cell == .Wall) {
+            walls[ind] = .{ .x = i % parsed.width, .y = i / parsed.width };
+            ind += 1;
+        };
+        var wallsCopy: [ind]Position = undefined;
+        std.mem.copyForwards(Position, &wallsCopy, walls[0..ind]);
+        break :walls wallsCopy;
+    };
     const Hints = struct {
         items: [parsed.items.len]?Position,
         pub fn get(self: *const @This(), pos: Position) ?Position {
@@ -61,6 +72,7 @@ pub fn Map(map: []const u8) type {
     };
     return struct {
         pub const items = parsed.items;
+        pub const walls = parsedWalls;
         pub fn getHints(target: Position) Hints {
             var hints = [_]?Position{null} ** parsed.items.len;
             const nodes: [parsed.items.len]usize = undefined;

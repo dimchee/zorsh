@@ -15,6 +15,10 @@ fn cameraAt(position: rl.Vector2) rl.Camera3D {
     };
 }
 
+fn posToVec3(pos: config.Position, height: f32) rl.Vector3 {
+    return rl.Vector3.init(@floatFromInt(pos.x), height, @floatFromInt(pos.y));
+}
+
 pub fn draw(ecs: *config.Ecs) void {
     const camera = camera: {
         var q = ecs.query(struct { transform: config.Transform, tag: config.PlayerTag });
@@ -25,21 +29,16 @@ pub fn draw(ecs: *config.Ecs) void {
     };
     camera.begin();
     defer camera.end();
-
-    for (0..100) |i| {
-        for (0..100) |j| {
-            const x: f32 = @floatFromInt(i);
-            const z: f32 = @floatFromInt(j);
-            rl.drawPlane(rl.Vector3.init(x - 50, 0, z - 50), rl.Vector2.init(1, 1), if ((i + j) % 2 == 0) rl.Color.white else rl.Color.blue);
-        }
-    }
     {
-        var q = ecs.query(struct { transform: config.Transform, tag: config.WallTag });
-        var it = q.iterator();
-        while (it.next()) |wall| {
-            const pos = rl.Vector3.init(wall.transform.position.x, 1, wall.transform.position.y);
-            const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
-            rl.drawCubeV(pos, size, rl.Color.dark_blue);
+        for (config.Map.items, 0..) |cell, ind| {
+            const pos = config.Map.toPos(ind).?;
+            switch (cell) {
+                .Wall => {
+                    const size = rl.Vector3.init(config.wall.size, config.wall.height, config.wall.size);
+                    rl.drawCubeV(posToVec3(pos, 1), size, rl.Color.dark_blue);
+                },
+                else => rl.drawPlane(posToVec3(pos, 0), rl.Vector2.init(1, 1), if ((pos.x + pos.y) % 2 == 0) rl.Color.white else rl.Color.blue),
+            }
         }
     }
     {

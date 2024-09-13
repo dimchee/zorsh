@@ -9,7 +9,7 @@ const End = enum { Left, Right };
 const Edge = struct { tag: End, index: usize, value: f32 };
 
 pub fn Collider(Shape: type) type {
-    return struct { transform: *config.Transform, shape: Shape };
+    return struct { transform: config.Transform, shape: Shape };
 }
 
 fn sqr(x: f32) f32 {

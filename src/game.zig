@@ -41,18 +41,12 @@ pub const World = struct {
         }
         {
             for (config.Map.items, 0..) |cell, ind| switch (cell) {
-                .Wall => ecs.add(.{
-                    config.Transform{ .position = fromPos(config.Map.toPos(ind).?) },
-                    config.Rectangle{ .size = rl.Vector2.init(config.wall.size, config.wall.size) },
-                    config.WallTag{},
-                }),
-                .Player => {},
-                .Empty => {},
                 .Spawner => ecs.add(.{
                     config.Transform{ .position = fromPos(config.Map.toPos(ind).?) },
                     config.NextSpawn{ .time = 0.0 },
                     config.SpawnerTag{},
                 }),
+                else => {},
             };
         }
         return .{ .allocator = allocator, .ecs = ecs, .score = 0 };
@@ -144,9 +138,9 @@ pub const World = struct {
                 var itX = q.from(c[0]);
                 var itY = q.from(c[1]);
                 if (itX.current()) |x| if (itY.current()) |y| if (collision.collide(x, y)) |dir| {
-                    x.transform.position = x.transform.position.add(dir.scale(0.5));
-                    y.transform.position = y.transform.position.subtract(dir.scale(0.5));
-                    inline for (.{ &itX, &itY }, .{ &itY, &itX }) |itA, itB| {
+                    inline for (.{ &itX, &itY }, .{ &itY, &itX }, .{ 0.5, -0.5 }) |itA, itB, scale| {
+                        if (itA.refine(struct { *config.Transform }, &self.ecs)) |a|
+                            a[0].position = a[0].position.add(dir.scale(scale));
                         if (itA.refine(struct { health: *config.Health }, &self.ecs)) |vulnerable|
                             if (itB.refine(struct { tag: config.BulletTag }, &self.ecs)) |_| {
                                 vulnerable.health[0] -= @min(vulnerable.health[0], config.bullet.damage);
@@ -164,13 +158,18 @@ pub const World = struct {
             var q = self.ecs.query(collision.Collider(config.Circle));
             var itX = q.iterator();
             while (itX.next()) |x| {
-                var qWall = self.ecs.query(collision.Collider(config.Rectangle));
-                var itWall = qWall.iterator();
-                while (itWall.next()) |wall| if (collision.collide(wall, x)) |dir| {
-                    if (itX.refine(struct { dir: *config.Direction, tag: config.BulletTag }, &self.ecs)) |b|
-                        b.dir[0] = b.dir[0].reflect(dir.normalize());
-                    x.transform.position = x.transform.position.add(dir);
-                };
+                for (config.Map.walls) |wallPos| {
+                    const wall = collision.Collider(config.Rectangle){
+                        .transform = .{ .position = fromPos(wallPos) },
+                        .shape = .{ .size = rl.Vector2.init(config.wall.size, config.wall.size) },
+                    };
+                    if (collision.collide(wall, x)) |dir| {
+                        if (itX.refine(struct { dir: *config.Direction, tag: config.BulletTag }, &self.ecs)) |b|
+                            b.dir[0] = b.dir[0].reflect(dir.normalize());
+                        if (itX.refine(struct { *config.Transform }, &self.ecs)) |a|
+                            a[0].position = a[0].position.add(dir);
+                    }
+                }
             }
         }
         {
