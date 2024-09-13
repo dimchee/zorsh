@@ -40,16 +40,12 @@ pub const World = struct {
             });
         }
         {
-            var i: usize = 0;
             for (config.Map.items, 0..) |cell, ind| switch (cell) {
-                .Wall => {
-                    ecs.add(.{
-                        config.Transform{ .position = fromPos(config.Map.toPos(ind).?) },
-                        config.Square{ .size = rl.Vector2.init(config.wall.size, config.wall.size) },
-                        config.WallTag{},
-                    });
-                    i += 1;
-                },
+                .Wall => ecs.add(.{
+                    config.Transform{ .position = fromPos(config.Map.toPos(ind).?) },
+                    config.Rectangle{ .size = rl.Vector2.init(config.wall.size, config.wall.size) },
+                    config.WallTag{},
+                }),
                 .Player => {},
                 .Empty => {},
                 .Spawner => ecs.add(.{
@@ -58,7 +54,6 @@ pub const World = struct {
                     config.SpawnerTag{},
                 }),
             };
-            std.debug.print("i: {}\n", .{i});
         }
         return .{ .allocator = allocator, .ecs = ecs, .score = 0 };
     }
@@ -107,7 +102,6 @@ pub const World = struct {
                 }
             }
         }
-        // TODO bullets going through walls (when one over the other)
         {
             var q = self.ecs.query(struct { transform: *config.Transform, dir: config.Direction });
             var it = q.iterator();
@@ -123,7 +117,7 @@ pub const World = struct {
                 if (isReadyToFire) {
                     self.ecs.add(.{
                         config.Transform{ .position = input.direction
-                            .scale(config.character.radius + config.bullet.radius)
+                            .scale(config.character.radius + config.bullet.radius * 1.1)
                             .add(player.transform.position) },
                         config.DeathTime{rl.getTime() + config.bullet.lifetime},
                         config.Direction{input.direction},
@@ -153,15 +147,15 @@ pub const World = struct {
                     x.transform.position = x.transform.position.add(dir.scale(0.5));
                     y.transform.position = y.transform.position.subtract(dir.scale(0.5));
                     inline for (.{ &itX, &itY }, .{ &itY, &itX }) |itA, itB| {
-                        if (itA.refine(struct { health: *config.Health, tag: config.EnemyTag }, &self.ecs)) |enemy| {
+                        if (itA.refine(struct { health: *config.Health }, &self.ecs)) |vulnerable|
                             if (itB.refine(struct { tag: config.BulletTag }, &self.ecs)) |_| {
-                                enemy.health[0] = if (enemy.health[0] < config.bullet.damage) 0 else enemy.health[0] - config.bullet.damage;
+                                vulnerable.health[0] -= @min(vulnerable.health[0], config.bullet.damage);
                                 itB.destroy(&self.ecs);
-                            }
-                            if (itB.refine(struct { health: *config.Health, tag: config.PlayerTag }, &self.ecs)) |p| {
-                                p.health[0] = if (p.health[0] < config.enemy.damage) 0 else p.health[0] - config.enemy.damage;
-                            }
-                        }
+                            };
+                        if (itA.refine(struct { health: *config.Health, tag: config.EnemyTag }, &self.ecs)) |_|
+                            if (itB.refine(struct { health: *config.Health, tag: config.PlayerTag }, &self.ecs)) |player| {
+                                player.health[0] -= @min(player.health[0], config.enemy.damage);
+                            };
                     }
                 };
             }
@@ -170,9 +164,11 @@ pub const World = struct {
             var q = self.ecs.query(collision.Collider(config.Circle));
             var itX = q.iterator();
             while (itX.next()) |x| {
-                var qWall = self.ecs.query(collision.Collider(config.Square));
+                var qWall = self.ecs.query(collision.Collider(config.Rectangle));
                 var itWall = qWall.iterator();
                 while (itWall.next()) |wall| if (collision.collide(wall, x)) |dir| {
+                    if (itX.refine(struct { dir: *config.Direction, tag: config.BulletTag }, &self.ecs)) |b|
+                        b.dir[0] = b.dir[0].reflect(dir.normalize());
                     x.transform.position = x.transform.position.add(dir);
                 };
             }

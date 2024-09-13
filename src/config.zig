@@ -15,13 +15,13 @@ pub const SpawnerTag = struct {};
 pub const NextSpawn = struct { time: f64 };
 
 pub const Circle = struct { radius: f32 };
-pub const Square = struct { size: rl.Vector2 };
+pub const Rectangle = struct { size: rl.Vector2 };
 
 const EnemySpawner = .{ Transform, NextSpawn, SpawnerTag };
 const Player = .{ Transform, Health, Gun, Circle, PlayerTag };
 const Bullet = .{ Transform, DeathTime, Direction, Circle, BulletTag };
 const Enemy = .{ Transform, Health, EnemyTag, Circle };
-const Wall = .{ Transform, Square, WallTag };
+const Wall = .{ Transform, Rectangle, WallTag };
 // TODO different max_entities for different entities
 pub const Ecs = ecs.Ecs(.{ Player, Bullet, Enemy, Wall, EnemySpawner });
 pub const Map = map.Map(@embedFile("map"));

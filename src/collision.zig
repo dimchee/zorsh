@@ -21,7 +21,7 @@ pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
         const scale = x.shape.radius + y.shape.radius - dif.length();
         return if (scale > 0) dif.normalize().scale(scale) else null;
     }
-    if (@TypeOf(x) == Collider(config.Square) and @TypeOf(y) == Collider(config.Circle)) {
+    if (@TypeOf(x) == Collider(config.Rectangle) and @TypeOf(y) == Collider(config.Circle)) {
         const sDif = y.transform.position.subtract(x.transform.position);
         const sgn = rl.Vector2.init(if (sDif.x > 0) -1 else 1, if (sDif.y > 0) -1 else 1);
         const dif = rl.Vector2.init(@abs(sDif.x) - x.shape.size.x / 2, @abs(sDif.y) - x.shape.size.y / 2);
@@ -37,7 +37,7 @@ pub fn collide(x: anytype, y: anytype) ?rl.Vector2 {
         }
         return null;
     }
-    if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Square)) {
+    if (@TypeOf(x) == Collider(config.Circle) and @TypeOf(y) == Collider(config.Rectangle)) {
         return collide(y, x);
     }
     const msg = "Can't collide `" + @typeName(x) + "` and `" + @typeName(y) + "`";
