@@ -9,6 +9,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.root_module.addAnonymousImport("map", .{
+        .root_source_file = b.path("assets/map"),
+    });
     b.installArtifact(exe);
     buildRun(b, exe);
     buildTest(b, target, optimize);
