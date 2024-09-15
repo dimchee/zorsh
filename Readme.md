@@ -20,3 +20,5 @@
 
 ## Assets
 - [tiny-texture-pack-2](https://opengameart.org/content/tiny-texture-pack-2)
+- [bushes](https://opengameart.org/content/bushes)
+- [dugeon](https://opengameart.org/content/modular-dungeon-2-3d-models)
