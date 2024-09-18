@@ -39,7 +39,5 @@ void main()
     // vec3 specular = vec3(0.3) * spec; // assuming bright white light color
     // specular = vec3(0);
 
-    finalColor = vec4(diffuse * attenuation, 1.0);
-    // finalColor = vec4(0.0, 1.0, 0.0, 1.0);
-    // finalColor = texelColor*colDiffuse;
+    finalColor = vec4(diffuse * attenuation, 1.0)*colDiffuse;
 }

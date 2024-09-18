@@ -87,7 +87,7 @@ pub fn main() anyerror!void {
     var state = State{
         .state = .{ .running = try game.World.init(allocator) },
         .allocator = allocator,
-        .renderData = render.load(),
+        .renderData = render.Data.init(),
     };
 
     // rl.disableCursor();
