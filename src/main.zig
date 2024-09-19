@@ -55,7 +55,7 @@ const State = struct {
                 rl.clearBackground(rl.Color.black);
                 switch (world.getStatus()) {
                     .score => |score| return .{ .finish = score },
-                    .healthPercentage => |health| {
+                    .hp => |health| {
                         render.draw(&world.ecs, &self.renderData);
                         var h = health;
                         _ = rg.guiProgressBar(rl.Rectangle.init(width() / 2 - 100 / 2, height() / 2 - 120, 100, 20), "", "", &h, 0, 1.0);

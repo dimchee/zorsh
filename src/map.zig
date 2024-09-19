@@ -1,4 +1,5 @@
 const std = @import("std");
+const rl = @import("raylib");
 
 fn Queue(maxLen: usize) type {
     return struct {
@@ -64,8 +65,8 @@ pub fn Map(map: []const u8) type {
         break :walls wallsCopy;
     };
     const Hints = struct {
-        items: [parsed.items.len]?Position,
-        pub fn get(self: *const @This(), pos: Position) ?Position {
+        items: [parsed.items.len]?rl.Vector2,
+        pub fn get(self: *const @This(), pos: Position) ?rl.Vector2 {
             const ind = pos.x + pos.y * parsed.width;
             return if (ind < parsed.items.len) self.items[ind] else null;
         }
@@ -74,7 +75,7 @@ pub fn Map(map: []const u8) type {
         pub const items = parsed.items;
         pub const walls = parsedWalls;
         pub fn getHints(target: Position) Hints {
-            var hints = [_]?Position{null} ** parsed.items.len;
+            var hints = [_]?rl.Vector2{null} ** parsed.items.len;
             const nodes: [parsed.items.len]usize = undefined;
             var queue = Queue(parsed.items.len){ .items = nodes, .bounds = .{ .front = 0, .end = 0 } };
             queue.reset();
@@ -90,11 +91,19 @@ pub fn Map(map: []const u8) type {
                 i +% 1 +% parsed.width,
             }) |nexti| {
                 if (nexti < hints.len and hints[nexti] == null and parsed.items[nexti] != Cell.Wall) {
-                    hints[nexti] = toPos(i);
+                    hints[nexti] = direction(toPos(nexti), toPos(i));
                     queue.push(nexti);
                 }
             };
             return .{ .items = hints };
+        }
+        pub fn direction(from: ?Position, to: ?Position) ?rl.Vector2 {
+            if (from) |a| if (to) |b| {
+                const aa = rl.Vector2.init(@floatFromInt(a.x), @floatFromInt(a.y));
+                const bb = rl.Vector2.init(@floatFromInt(b.x), @floatFromInt(b.y));
+                return bb.subtract(aa);
+            };
+            return null;
         }
         pub fn toPos(index: usize) ?Position {
             if (index >= parsed.items.len) return null;

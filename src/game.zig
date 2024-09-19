@@ -5,7 +5,7 @@ const config = @import("config.zig");
 
 const Status = union(enum) {
     score: u32,
-    healthPercentage: f32,
+    hp: f32,
 };
 
 pub const Input = struct {
@@ -34,7 +34,8 @@ pub const World = struct {
             ecs.add(.{
                 config.Health{config.player.health},
                 config.Transform{ .position = pos },
-                config.Gun{ .lastFired = 0 },
+                config.Physics{ .velocity = rl.Vector2.zero() },
+                config.Gun{ .lastFired = 0, .angle = 0, .triggered = false },
                 config.Circle{ .radius = config.character.radius },
                 config.PlayerTag{},
             });
@@ -54,9 +55,30 @@ pub const World = struct {
     pub fn getStatus(self: *World) Status {
         var q = self.ecs.query(struct { health: config.Health, tag: config.PlayerTag });
         var it = q.iterator();
-        return if (it.next()) |x| .{ .healthPercentage = @as(f32, @floatFromInt(x.health[0])) / config.player.health } else .{ .score = self.score };
+        return if (it.next()) |x| .{ .hp = @as(f32, @floatFromInt(x.health[0])) / config.player.health } else .{ .score = self.score };
     }
     pub fn update(self: *World, input: Input) !void {
+        // Input
+        const hints = hints: {
+            var q = self.ecs.query(struct { transform: config.Transform, physics: *config.Physics, gun: *config.Gun, tag: config.PlayerTag });
+            var it = q.iterator();
+            var player = it.next().?;
+            std.debug.assert(it.next() == null);
+            player.gun.triggered = input.shoot;
+            player.gun.angle = rl.Vector2.init(0, 1).angle(input.direction);
+            player.physics.velocity = input.movement
+                .scale(config.character.speed)
+                .rotate(rl.Vector2.init(0, 1).angle(input.direction));
+            break :hints config.Map.getHints(toPos(player.transform.position));
+        };
+        {
+            var q = self.ecs.query(struct { transform: config.Transform, physics: *config.Physics, tag: config.EnemyTag });
+            var it = q.iterator();
+            while (it.next()) |enemy| if (hints.get(toPos(enemy.transform.position))) |hint| {
+                enemy.physics.velocity = hint.normalize().scale(config.character.speed * config.enemy.speedFactor);
+            };
+        }
+        // Spawning
         {
             var q = self.ecs.query(struct { transform: config.Transform, nextSpawn: *config.NextSpawn, tag: config.SpawnerTag });
             var it = q.iterator();
@@ -66,61 +88,38 @@ pub const World = struct {
                 self.ecs.add(.{
                     .health = config.Health{config.enemy.health},
                     .transform = config.Transform{ .position = spawner.transform.position },
+                    .physics = config.Physics{ .velocity = rl.Vector2.zero() },
                     .shape = config.Circle{ .radius = config.character.radius },
                     .tag = config.EnemyTag{},
                 });
             }
         }
-        const hints = hints: {
-            var q = self.ecs.query(struct { transform: *config.Transform, tag: config.PlayerTag });
-            var it = q.iterator();
-            var player = it.next().?;
-            std.debug.assert(it.next() == null);
-            player.transform.position = input.movement
-                .scale(config.character.speed)
-                .rotate(-input.direction.angle(rl.Vector2.init(0, 1)))
-                .add(player.transform.position);
-            break :hints config.Map.getHints(toPos(player.transform.position));
-        };
         {
-            var q = self.ecs.query(struct { transform: *config.Transform, tag: config.EnemyTag });
-            var it = q.iterator();
-            while (it.next()) |enemy| {
-                if (hints.get(toPos(enemy.transform.position))) |hint| {
-                    enemy.transform.position = fromPos(hint)
-                        .subtract(enemy.transform.position)
-                        .normalize().scale(config.character.speed * config.enemy.speedFactor)
-                        .add(enemy.transform.position);
-                } else {
-                    std.log.warn("No hint for enemy at {}", .{enemy.transform.position});
-                }
-            }
-        }
-        {
-            var q = self.ecs.query(struct { transform: *config.Transform, dir: config.Direction });
-            var it = q.iterator();
-            while (it.next()) |bullet| {
-                bullet.transform.position = bullet.transform.position.add(bullet.dir[0].normalize().scale(config.bullet.speed));
-            }
-        }
-        if (input.shoot) {
             var q = self.ecs.query(struct { transform: config.Transform, gun: *config.Gun });
             var it = q.iterator();
-            while (it.next()) |player| {
-                const isReadyToFire = player.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
-                if (isReadyToFire) {
+            while (it.next()) |shooter| {
+                const isReadyToFire = shooter.gun.lastFired + 1.0 / config.bullet.rate < rl.getTime();
+                if (isReadyToFire and shooter.gun.triggered) {
+                    const dir = rl.Vector2.init(0, 1).rotate(shooter.gun.angle);
+                    const dist = config.character.radius + config.bullet.radius * 1.1;
+                    const pos = dir.scale(dist).add(shooter.transform.position);
                     self.ecs.add(.{
-                        config.Transform{ .position = input.direction
-                            .scale(config.character.radius + config.bullet.radius * 1.1)
-                            .add(player.transform.position) },
+                        config.Transform{ .position = pos },
                         config.DeathTime{rl.getTime() + config.bullet.lifetime},
-                        config.Direction{input.direction},
+                        config.Physics{ .velocity = dir.scale(config.bullet.speed) },
                         config.Circle{ .radius = config.bullet.radius },
                         config.BulletTag{},
                     });
-                    player.gun.lastFired = rl.getTime();
+                    shooter.gun.lastFired = rl.getTime();
                 }
             }
+        }
+        // Physics
+        {
+            var q = self.ecs.query(struct { transform: *config.Transform, physics: config.Physics });
+            var it = q.iterator();
+            while (it.next()) |x|
+                x.transform.position = x.transform.position.add(x.physics.velocity);
         }
         {
             var q = self.ecs.query(collision.Collider(config.Circle));
@@ -164,14 +163,15 @@ pub const World = struct {
                         .shape = .{ .size = rl.Vector2.init(config.wall.size, config.wall.size) },
                     };
                     if (collision.collide(wall, x)) |dir| {
-                        if (itX.refine(struct { dir: *config.Direction, tag: config.BulletTag }, &self.ecs)) |b|
-                            b.dir[0] = b.dir[0].reflect(dir.normalize());
+                        if (itX.refine(struct { physics: *config.Physics, tag: config.BulletTag }, &self.ecs)) |b|
+                            b.physics.velocity = b.physics.velocity.reflect(dir.normalize());
                         if (itX.refine(struct { *config.Transform }, &self.ecs)) |a|
                             a[0].position = a[0].position.add(dir);
                     }
                 }
             }
         }
+        // Destroying
         {
             var q = self.ecs.query(struct { deathTime: config.DeathTime });
             var it = q.iterator();

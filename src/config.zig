@@ -3,9 +3,9 @@ const ecs = @import("ecs.zig");
 const map = @import("map.zig");
 
 pub const Transform = struct { position: rl.Vector2 };
+pub const Physics = struct { velocity: rl.Vector2 };
 pub const Health = struct { u32 };
-pub const Direction = struct { rl.Vector2 };
-pub const Gun = struct { lastFired: f64 };
+pub const Gun = struct { lastFired: f64, angle: f32, triggered: bool };
 pub const DeathTime = struct { f64 };
 pub const EnemyTag = struct {};
 pub const BulletTag = struct {};
@@ -17,9 +17,9 @@ pub const Circle = struct { radius: f32 };
 pub const Rectangle = struct { size: rl.Vector2 };
 
 const EnemySpawner = .{ Transform, NextSpawn, SpawnerTag };
-const Player = .{ Transform, Health, Gun, Circle, PlayerTag };
-const Bullet = .{ Transform, DeathTime, Direction, Circle, BulletTag };
-const Enemy = .{ Transform, Health, EnemyTag, Circle };
+const Player = .{ Transform, Physics, Health, Gun, Circle, PlayerTag };
+const Bullet = .{ Transform, Physics, DeathTime, Circle, BulletTag };
+const Enemy = .{ Transform, Physics, Health, EnemyTag, Circle };
 // TODO different max_entities for different entities
 pub const Ecs = ecs.Ecs(.{ Player, Bullet, Enemy, EnemySpawner });
 pub const Map = map.Map(@embedFile("map"));

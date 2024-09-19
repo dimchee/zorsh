@@ -101,14 +101,13 @@ pub const Data = struct {
 pub fn draw(ecs: *config.Ecs, data: *Data) void {
     data.updateShader();
     const camera = camera: {
-        var q = ecs.query(struct { transform: config.Transform, tag: config.PlayerTag });
+        var q = ecs.query(struct { transform: config.Transform, gun: config.Gun, tag: config.PlayerTag });
         var it = q.iterator();
         const player = it.next().?;
         std.debug.assert(it.next() == null);
         const pos3d = vec2ToVec3(player.transform.position, 0);
         const cameraPos = pos3d.add(config.player.cameraDelta);
-        const lightPos = pos3d.add(rl.Vector3.init(0, 1, 1));
-        data.setUniform("lightPos", lightPos);
+        data.setUniform("lightPos", vec2ToVec3(rl.Vector2.init(0, 1).rotate(player.gun.angle), 1).add(pos3d));
         data.setUniform("viewPos", cameraPos);
         break :camera rl.Camera3D{
             .position = cameraPos,
@@ -131,6 +130,14 @@ pub fn draw(ecs: *config.Ecs, data: *Data) void {
         }
     }
     {
+        var q = ecs.query(struct { transform: config.Transform, gun: config.Gun });
+        var it = q.iterator();
+        while (it.next()) |gun| {
+            const end = vec2ToVec3(gun.transform.position.add(rl.Vector2.init(0, 1).rotate(gun.gun.angle).scale(0.8)), 1.2);
+            rl.drawCylinderEx(vec2ToVec3(gun.transform.position, 1.2), end, 0.1, 0.1, 10, rl.Color.brown);
+        }
+    }
+    {
         var q = ecs.query(struct { transform: config.Transform, tag: config.PlayerTag });
         var it = q.iterator();
         while (it.next()) |player|
@@ -148,10 +155,31 @@ pub fn draw(ecs: *config.Ecs, data: *Data) void {
         while (it.next()) |enemy| {
             const hp = @as(f32, @floatFromInt(enemy.health[0])) / config.enemy.health;
             const color = rl.Color.fromNormalized(rl.Vector4.init(hp, 0, 0.2, 1));
-
-            data.setUniform("colDiffuse", color);
             data.character.draw(vec2ToVec3(enemy.transform.position, 0), 1.0, color);
-            data.setUniform("colDiffuse", rl.Color.white);
+        }
+    }
+    // drawHints(ecs);
+}
+
+fn toPos(vec: rl.Vector2) config.Position {
+    return .{ .x = @intFromFloat(vec.x + 0.5), .y = @intFromFloat(vec.y + 0.5) };
+}
+pub fn drawHints(ecs: *config.Ecs) void {
+    const hints = hints: {
+        var q = ecs.query(struct { transform: config.Transform, tag: config.PlayerTag });
+        var it = q.iterator();
+        const player = it.next().?;
+        std.debug.assert(it.next() == null);
+        break :hints config.Map.getHints(toPos(player.transform.position));
+    };
+    const cone = rl.genMeshCone(0.1, 0.4, 10);
+    for (config.Map.items, 0..) |_, ind| {
+        const pos = config.Map.toPos(ind).?;
+        if (hints.get(pos)) |h| {
+            const trans = rl.Matrix.rotateX(std.math.pi / 2.0)
+                .multiply(rl.Matrix.rotateY(-rl.Vector2.init(0, 1).angle(h)))
+                .multiply(rl.Matrix.translate(@floatFromInt(pos.x), 2.5, @floatFromInt(pos.y)));
+            rl.drawMesh(cone, rl.loadMaterialDefault(), trans);
         }
     }
 }
