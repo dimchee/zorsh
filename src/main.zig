@@ -26,9 +26,11 @@ const State = struct {
                     .{ rl.KeyboardKey.key_a, .{ .x = 1, .y = 0 } },
                     .{ rl.KeyboardKey.key_d, .{ .x = -1, .y = 0 } },
                 };
-                input.movement = for (bindings) |kv| {
-                    if (rl.isKeyDown(kv[0])) break kv[1];
-                } else rl.Vector2{ .x = 0, .y = 0 };
+                input.movement = rl.Vector2{ .x = 0, .y = 0 };
+                for (bindings) |kv| if (rl.isKeyDown(kv[0])) {
+                    input.movement = input.movement.add(kv[1]);
+                };
+                input.movement = input.movement.normalize();
                 input.shoot = rl.isMouseButtonDown(rl.MouseButton.mouse_button_left) or rl.isKeyDown(rl.KeyboardKey.key_space);
                 input.direction = rl.getMousePosition().subtract(rl.Vector2.init(width() / 2, height() / 2)).normalize();
                 try world.update(input);
