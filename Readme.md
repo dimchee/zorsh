@@ -9,11 +9,11 @@
 - [x] shooting
 - [x] enemy AI
 - [x] simple UI
-- [ ] structure for bullets in gun
-    - Closest circle to a given point in O(log(n))
 - [x] smarter AI
-- [ ] Blinn-Phong lighting
+- [x] Blinn-Phong lighting
 - [ ] spotlights
+
+## Ideas
 - [ ] invisible walls
 - [ ] different guns
 - [ ] portals
