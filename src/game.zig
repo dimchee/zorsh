@@ -66,9 +66,7 @@ pub const World = struct {
             std.debug.assert(it.next() == null);
             player.gun.triggered = input.shoot;
             player.gun.angle = rl.Vector2.init(0, 1).angle(input.direction);
-            player.physics.velocity = input.movement
-                .scale(config.character.speed)
-                .rotate(rl.Vector2.init(0, 1).angle(input.direction));
+            player.physics.velocity = input.movement.scale(-config.character.speed);
             break :hints config.Map.getHints(toPos(player.transform.position));
         };
         {
