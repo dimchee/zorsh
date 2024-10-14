@@ -26,7 +26,7 @@ pub const World = struct {
     allocator: std.mem.Allocator,
     ecs: config.Ecs,
     pub fn init(allocator: std.mem.Allocator) !World {
-        var ecs = try config.Ecs.init(allocator, 1000);
+        var ecs = try config.Ecs.init(allocator, 500);
         {
             const pos = for (config.Map.items, 0..) |cell, ind| {
                 if (cell == .Player) if (config.Map.toPos(ind)) |v| break fromPos(v);

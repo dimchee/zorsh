@@ -9,6 +9,11 @@
     in
     {
       devShell.x86_64-linux = pkgs.mkShell {
+        EM_CONFIG = pkgs.writeText ".emscripten" ''
+          LLVM_ROOT = '${pkgs.emscripten.llvmEnv}/bin'
+          BINARYEN_ROOT = '${pkgs.binaryen}'
+          NODE_JS = '${pkgs.nodejs}/bin/node'
+        '';
         buildInputs = [ pkgs.libGL pkgs.zig pkgs.zls ] ++ wayDeps ++ xDeps;
       };
     };

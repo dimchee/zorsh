@@ -77,8 +77,8 @@ const State = struct {
 };
 
 pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // const allocator = gpa.allocator();
 
     rl.initWindow(1600, 900, "Zorsh");
     defer rl.closeWindow();
@@ -87,8 +87,9 @@ pub fn main() anyerror!void {
     rg.guiSetFont(font);
 
     var state = State{
-        .state = .{ .running = try game.World.init(allocator) },
-        .allocator = allocator,
+        // .state = .{ .running = try game.World.init(allocator) },
+        .state = .menu,
+        .allocator = std.heap.c_allocator,
         .renderData = render.Data.init(),
     };
 
