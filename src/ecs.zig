@@ -1,5 +1,10 @@
 const std = @import("std");
 
+// ToDo src/ecs.zig:178:63: error: Bundle not recognised
+// - when you try to add bundle that is not registred
+//
+// ToDo `add` functions colide with `rl.Vector2.add`
+
 pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
     if (a.len != b.len) return false;
     for (a, b) |a_elem, b_elem| if (!std.meta.eql(a_elem, b_elem)) return false;
